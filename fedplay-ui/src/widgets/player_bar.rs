@@ -1,6 +1,7 @@
 //! Player bar persistente do Fedplay
 
 use fedplay_audio::GStreamerPlayer;
+use fedplay_core::Track;
 use gtk4::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -8,6 +9,9 @@ use std::rc::Rc;
 /// Player bar na parte inferior da janela
 pub struct PlayerBar {
     pub widget: gtk4::Box,
+    title_label: gtk4::Label,
+    artist_label: gtk4::Label,
+    play_button: gtk4::Button,
 }
 
 impl PlayerBar {
@@ -32,12 +36,12 @@ impl PlayerBar {
         let text_box = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
         text_box.set_valign(gtk4::Align::Center);
 
-        let title_label = gtk4::Label::new(Some("Fedora Soundscapes"));
+        let title_label = gtk4::Label::new(Some("Nenhuma faixa selecionada"));
         title_label.add_css_class("body-medium");
         title_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
         title_label.set_halign(gtk4::Align::Start);
 
-        let artist_label = gtk4::Label::new(Some("Libadwaita Orchestra"));
+        let artist_label = gtk4::Label::new(Some("Fedplay"));
         artist_label.add_css_class("dim-label");
         artist_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
         artist_label.set_halign(gtk4::Align::Start);
@@ -58,33 +62,41 @@ impl PlayerBar {
         let prev_button = gtk4::Button::from_icon_name("media-skip-backward-symbolic");
         prev_button.add_css_class("control-button");
 
-        let play_button = gtk4::Button::from_icon_name("play-arrow-symbolic");
+        let play_button = gtk4::Button::from_icon_name("media-playback-start-symbolic");
         play_button.add_css_class("play-button");
 
         let next_button = gtk4::Button::from_icon_name("media-skip-forward-symbolic");
         next_button.add_css_class("control-button");
 
         let player_play = player.clone();
+        let play_btn_clone = play_button.clone();
         play_button.connect_clicked(move |_| {
-            let _ = player_play.borrow().play();
+            let state = player_play.borrow().get_state();
+            let _ = if matches!(state.playback, fedplay_core::PlaybackState::Playing) {
+                play_btn_clone.set_icon_name("media-playback-start-symbolic");
+                player_play.borrow().pause()
+            } else {
+                play_btn_clone.set_icon_name("media-playback-pause-symbolic");
+                player_play.borrow().play()
+            };
         });
 
         buttons_box.append(&prev_button);
         buttons_box.append(&play_button);
         buttons_box.append(&next_button);
 
-        // Slider de progresso
+        // Slider de progresso (placeholder visual por enquanto)
         let progress_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
         progress_box.set_halign(gtk4::Align::Center);
 
-        let current_time = gtk4::Label::new(Some("1:20"));
+        let current_time = gtk4::Label::new(Some("0:00"));
         current_time.add_css_class("numeric-mono");
 
         let scale = gtk4::Scale::with_range(gtk4::Orientation::Horizontal, 0.0, 100.0, 1.0);
         scale.set_draw_value(false);
         scale.set_size_request(300, -1);
 
-        let total_time = gtk4::Label::new(Some("4:04"));
+        let total_time = gtk4::Label::new(Some("0:00"));
         total_time.add_css_class("numeric-mono");
 
         progress_box.append(&current_time);
@@ -99,23 +111,28 @@ impl PlayerBar {
         actions_box.set_halign(gtk4::Align::End);
         actions_box.set_hexpand(true);
 
-        let volume_button = gtk4::Button::from_icon_name("volume-up-symbolic");
+        let volume_button = gtk4::Button::from_icon_name("audio-volume-high-symbolic");
         volume_button.add_css_class("control-button");
 
-        let queue_button = gtk4::Button::from_icon_name("queue-music-symbolic");
-        queue_button.add_css_class("control-button");
-
-        let edit_button = gtk4::Button::from_icon_name("edit-note-symbolic");
-        edit_button.add_css_class("control-button");
-
         actions_box.append(&volume_button);
-        actions_box.append(&queue_button);
-        actions_box.append(&edit_button);
 
         bar.append(&info_box);
         bar.append(&controls_box);
         bar.append(&actions_box);
 
-        Self { widget: bar }
+        Self {
+            widget: bar,
+            title_label,
+            artist_label,
+            play_button,
+        }
+    }
+
+    /// Atualiza as informações da faixa na interface
+    pub fn set_track(&self, track: &Track) {
+        self.title_label.set_text(&track.display_title());
+        self.artist_label.set_text(&track.display_artist());
+        self.play_button
+            .set_icon_name("media-playback-pause-symbolic");
     }
 }

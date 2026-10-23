@@ -3,11 +3,12 @@
 use crate::views::{EmptyView, LibraryView};
 use crate::widgets::{PlayerBar, Sidebar};
 use fedplay_audio::GStreamerPlayer;
+use fedplay_core::Track;
 use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use std::cell::RefCell;
-use std::rc::Rc;
+use std::rc::Rc; // Necessário para o Rc::clone
 
 /// Aplicação principal do Fedplay
 pub struct FedplayApp {
@@ -43,8 +44,8 @@ impl FedplayApp {
         // Toast overlay (para notificações)
         let toast_overlay = adw::ToastOverlay::new();
 
-        // Player bar (bottom)
-        let player_bar = PlayerBar::new(self.player.clone());
+        // Player bar (bottom) - Envolvido em Rc para permitir clone no closure
+        let player_bar = Rc::new(PlayerBar::new(self.player.clone()));
 
         // Split view (sidebar + content)
         let split_view = adw::NavigationSplitView::new();
@@ -82,6 +83,86 @@ impl FedplayApp {
         let title = adw::WindowTitle::new("Todas as Músicas", "Biblioteca de músicas do Fedplay");
         header.set_title_widget(Some(&title));
 
+        // ==========================================
+        // Botão de Adicionar Música (Funcionalidade M1 restaurada)
+        // ==========================================
+        let add_button = gtk4::Button::from_icon_name("list-add-symbolic");
+        add_button.add_css_class("flat");
+        add_button.set_tooltip_text(Some("Adicionar arquivo de áudio"));
+
+        let player_clone = Rc::clone(&self.player);
+        let player_bar_clone = Rc::clone(&player_bar);
+
+        add_button.connect_clicked(move |_| {
+            // Criar clones para esta operação de seleção.
+            // A closure do botão continua reutilizável.
+            let player = Rc::clone(&player_clone);
+            let player_bar = Rc::clone(&player_bar_clone);
+
+            let dialog = gtk4::FileDialog::new();
+            dialog.set_title("Selecionar Arquivo de Áudio");
+
+            let filter = gtk4::FileFilter::new();
+            filter.set_name(Some("Arquivos de Áudio"));
+            filter.add_mime_type("audio/mpeg");
+            filter.add_mime_type("audio/mp4");
+            filter.add_mime_type("audio/x-m4a");
+            filter.add_mime_type("audio/flac");
+            dialog.set_default_filter(Some(&filter));
+
+            dialog.open(
+                None::<&gtk4::Window>,
+                None::<&gtk4::gio::Cancellable>,
+                move |result| {
+                    let file = match result {
+                        Ok(file) => file,
+                        Err(error) => {
+                            eprintln!("Erro ao selecionar ficheiro: {error}");
+                            return;
+                        }
+                    };
+
+                    let path = match file.path() {
+                        Some(path) => path,
+                        None => {
+                            eprintln!("Não foi possível obter o caminho do ficheiro.");
+                            return;
+                        }
+                    };
+
+                    let track = Track::new(
+                        1,
+                        path.clone(),
+                        fedplay_core::TrackMetadata {
+                            title: path
+                                .file_stem()
+                                .and_then(|s| s.to_str())
+                                .map(str::to_string),
+                            ..Default::default()
+                        },
+                    );
+
+                    let mut player = player.borrow_mut();
+
+                    if let Err(error) = player.load(&track) {
+                        eprintln!("Erro ao carregar faixa: {error}");
+                        return;
+                    }
+
+                    if let Err(error) = player.play() {
+                        eprintln!("Erro ao iniciar reprodução: {error}");
+                        return;
+                    }
+
+                    // Atualizar a interface após iniciar a reprodução.
+                    player_bar.set_track(&track);
+                },
+            );
+        });
+
+        header.pack_end(&add_button);
+        // ==========================================
+
         // Botões do header
         let sort_button = gtk4::MenuButton::new();
         sort_button.set_icon_name("view-sort-ascending-symbolic");
@@ -111,6 +192,8 @@ impl FedplayApp {
         // Layout principal (split + player bar)
         let main_box = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
         main_box.append(&split_view);
+
+        // Rc faz deref automaticamente, então &player_bar.widget funciona perfeitamente
         main_box.append(&player_bar.widget);
 
         toast_overlay.set_child(Some(&main_box));
@@ -118,37 +201,30 @@ impl FedplayApp {
         window.present();
     }
 
-    /// Carrega o CSS custom
+    /// Carrega o CSS custom do arquivo do sistema de arquivos
     /// Carrega o CSS custom do arquivo do sistema de arquivos
     fn load_css(&self) {
-        let css_path = std::path::Path::new("fedplay-ui/data/style.css");
+        // CARGO_MANIFEST_DIR aponta sempre para a raiz do crate fedplay-ui
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let css_path = std::path::Path::new(manifest_dir).join("data/style.css");
+
         let provider = gtk4::CssProvider::new();
 
         let fallback_css = r#"
-        .fedplay-window {
-            background-color: #242424;
-        }
-
-        .player-bar {
-            background-color: #1e1e1e;
-        }
-
-        .track-row:hover {
-            background-color: rgba(53, 132, 228, 0.1);
-        }
-    "#;
+            .fedplay-window { background-color: #242424; }
+            .player-bar { background-color: #1e1e1e; }
+            .track-row:hover { background-color: rgba(53, 132, 228, 0.1); }
+        "#;
 
         if css_path.is_file() {
-            println!("A carregar CSS de: {}", css_path.display());
-
-            provider.load_from_path(css_path);
+            println!("✓ CSS carregado de: {}", css_path.display());
+            let _ = provider.load_from_path(&css_path);
         } else {
             eprintln!(
-                "CSS não encontrado em: {}. A utilizar estilos alternativos.",
+                "⚠ CSS não encontrado em: {}. A utilizar estilos alternativos.",
                 css_path.display()
             );
-
-            provider.load_from_data(fallback_css);
+            let _ = provider.load_from_data(fallback_css);
         }
 
         if let Some(display) = gtk4::gdk::Display::default() {
