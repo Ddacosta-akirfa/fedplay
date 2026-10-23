@@ -1,0 +1,13 @@
+[package]
+name = "fedplay-audio"
+version = "0.1.0"
+edition = "2024"
+description = "Audio backend for Fedplay using GStreamer"
+license = "GPL-3.0"
+
+[dependencies]
+gstreamer = "0.21"
+gstreamer-play = "0.21"
+fedplay-core = { path = "../fedplay-core" }
+thiserror = "2.0.21"
+url = "2.5.8"

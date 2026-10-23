@@ -1,0 +1,8 @@
+[package]
+name = "fedplay-dbus"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+zbus = "3.14"
+fedplay-core = { path = "../fedplay-core" }

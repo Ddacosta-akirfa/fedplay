@@ -1,0 +1,8 @@
+[workspace]
+members = [
+    "fedplay-core",
+    "fedplay-audio",
+    "fedplay-ui",
+    "fedplay-dbus",
+]
+resolver="3"

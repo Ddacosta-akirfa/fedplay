@@ -1,0 +1,38 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+Cargo.lock  # Descomente se for biblioteca
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+/build/
+/dist/
+*.o
+*.so
+*.dylib
+
+# Logs
+*.log
+npm-debug.log*
+
+# Testes
+/coverage/
+*.lcov
+
+# Flatpak
+.flatpak-builder/
+repo/
+
+# Documentação gerada
+/doc/
