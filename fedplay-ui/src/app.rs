@@ -119,14 +119,46 @@ impl FedplayApp {
     }
 
     /// Carrega o CSS custom
+    /// Carrega o CSS custom do arquivo do sistema de arquivos
     fn load_css(&self) {
+        let css_path = std::path::Path::new("fedplay-ui/data/style.css");
         let provider = gtk4::CssProvider::new();
-        provider.load_from_resource("/com/github/fedplay/Fedplay/style.css");
 
-        gtk4::style_context_add_provider_for_display(
-            &gtk4::gdk::Display::default().expect("Could not get display"),
-            &provider,
-            gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
-        );
+        let fallback_css = r#"
+        .fedplay-window {
+            background-color: #242424;
+        }
+
+        .player-bar {
+            background-color: #1e1e1e;
+        }
+
+        .track-row:hover {
+            background-color: rgba(53, 132, 228, 0.1);
+        }
+    "#;
+
+        if css_path.is_file() {
+            println!("A carregar CSS de: {}", css_path.display());
+
+            provider.load_from_path(css_path);
+        } else {
+            eprintln!(
+                "CSS não encontrado em: {}. A utilizar estilos alternativos.",
+                css_path.display()
+            );
+
+            provider.load_from_data(fallback_css);
+        }
+
+        if let Some(display) = gtk4::gdk::Display::default() {
+            gtk4::style_context_add_provider_for_display(
+                &display,
+                &provider,
+                gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+            );
+        } else {
+            eprintln!("Não foi possível obter o display GTK.");
+        }
     }
 }
