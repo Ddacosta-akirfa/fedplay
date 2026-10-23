@@ -1,16 +1,17 @@
 //! Empty state view
 
 use gtk4::prelude::*;
+use libadwaita as adw;
 
 /// View de biblioteca vazia
 pub struct EmptyView {
-    pub widget: gtk4::Box,
+    pub widget: adw::Clamp, // ← MUDAR DE Box PARA Clamp
 }
 
 impl EmptyView {
     /// Cria uma nova empty view
     pub fn new() -> Self {
-        let clamp = libadwaita::Clamp::new();
+        let clamp = adw::Clamp::new();
         clamp.set_maximum_size(600);
 
         let box_ = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
@@ -39,8 +40,6 @@ impl EmptyView {
         let add_button = gtk4::Button::with_label("Adicionar Pasta de Música");
         add_button.add_css_class("suggested-action");
         add_button.add_css_class("pill");
-        let icon = gtk4::Image::from_icon_name("list-add-symbolic");
-        add_button.set_child(Some(&icon));
 
         // Texto de drag & drop
         let drag_label = gtk4::Label::new(Some("Ou arraste arquivos do Nautilus aqui"));
@@ -94,6 +93,6 @@ impl EmptyView {
 
         clamp.set_child(Some(&box_));
 
-        Self { widget: clamp }
+        Self { widget: clamp } // ← Retornar o Clamp, não o Box
     }
 }

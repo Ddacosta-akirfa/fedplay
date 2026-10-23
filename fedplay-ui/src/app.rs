@@ -3,7 +3,6 @@
 use crate::views::{EmptyView, LibraryView};
 use crate::widgets::{PlayerBar, Sidebar};
 use fedplay_audio::GStreamerPlayer;
-use fedplay_core::{Track, TrackMetadata};
 use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
@@ -80,7 +79,7 @@ impl FedplayApp {
 
         // Header bar
         let header = adw::HeaderBar::new();
-        let title = adw::WindowTitle::new("Todas as Músicas", Some("148 faixas"));
+        let title = adw::WindowTitle::new("Todas as Músicas", "Biblioteca de músicas do Fedplay");
         header.set_title_widget(Some(&title));
 
         // Botões do header

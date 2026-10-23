@@ -12,6 +12,19 @@ pub enum NavItem {
     Playlists,
 }
 
+impl NavItem {
+    /// Converte o índice da linha do ListBox em um NavItem
+    pub fn from_index(index: i32) -> Option<Self> {
+        match index {
+            0 => Some(NavItem::Music),
+            1 => Some(NavItem::Artists),
+            2 => Some(NavItem::Albums),
+            3 => Some(NavItem::Playlists),
+            _ => None,
+        }
+    }
+}
+
 /// Sidebar do Fedplay
 pub struct Sidebar {
     pub widget: adw::ToolbarView,
@@ -51,19 +64,15 @@ impl Sidebar {
         search.set_margin_end(12);
         search.set_margin_bottom(12);
 
-        // Itens de navegação
+        // Itens de navegação (ordem define o índice: 0=Músicas, 1=Artistas, etc.)
         let nav_items = [
-            ("music-note-symbolic", "Músicas", NavItem::Music),
-            ("person-symbolic", "Artistas", NavItem::Artists),
-            ("album-symbolic", "Álbuns", NavItem::Albums),
-            (
-                "queue-music-symbolic",
-                "Listas de Reprodução",
-                NavItem::Playlists,
-            ),
+            ("music-note-symbolic", "Músicas"),
+            ("person-symbolic", "Artistas"),
+            ("album-symbolic", "Álbuns"),
+            ("queue-music-symbolic", "Listas de Reprodução"),
         ];
 
-        for (icon_name, label, nav_item) in nav_items {
+        for (icon_name, label) in nav_items {
             let row = gtk4::ListBoxRow::new();
             row.add_css_class("nav-item");
 
@@ -85,16 +94,12 @@ impl Sidebar {
             row_box.append(&label_widget);
             row.set_child(Some(&row_box));
 
-            // Armazenar o NavItem como dados
-            row.set_tag(nav_item as i32);
-
             list_box.append(&row);
         }
 
         // Selecionar primeiro item por padrão
         if let Some(first_row) = list_box.row_at_index(0) {
             list_box.select_row(Some(&first_row));
-            first_row.activate();
         }
 
         // Status card (PipeWire Engine)
@@ -131,21 +136,5 @@ impl Sidebar {
             widget: toolbar_view,
             list_box,
         }
-    }
-}
-
-// Trait helper para armazenar tag em ListBoxRow
-trait ListBoxRowExt {
-    fn set_tag(&self, tag: i32);
-    fn get_tag(&self) -> Option<i32>;
-}
-
-impl ListBoxRowExt for gtk4::ListBoxRow {
-    fn set_tag(&self, tag: i32) {
-        self.set_data::<i32>("nav-tag", tag);
-    }
-
-    fn get_tag(&self) -> Option<i32> {
-        self.data::<i32>("nav-tag").copied()
     }
 }
