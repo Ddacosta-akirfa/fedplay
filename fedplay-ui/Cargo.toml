@@ -1,0 +1,17 @@
+[package]
+name = "fedplay-ui"
+version = "0.1.0"
+edition = "2024"
+description = "GTK4 + Libadwaita interface for Fedplay"
+license = "GPL-3.0"
+
+[[bin]]
+name = "fedplay"
+path = "src/main.rs"
+
+[dependencies]
+ # A feature "v4_10" é obrigatória para usar FileDialog, FileLauncher, etc.
+gtk4 = { version = "0.11.5", features = ["v4_10"] }
+libadwaita = { version = "0.9.2", features = ["v1_3"] }
+fedplay-core = { path = "../fedplay-core" }
+fedplay-audio = { path = "../fedplay-audio" }

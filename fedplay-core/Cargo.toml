@@ -1,0 +1,12 @@
+[package]
+name = "fedplay-core"
+version = "0.1.0"
+edition = "2024"
+description = "Core logic and data structures for Fedplay"
+license = "GPL-3.0"
+
+[dependencies]
+lofty = "0.16"
+rusqlite = { version = "0.31", features = ["bundled"] }
+tokio = { version = "1.32", features = ["full"] }
+thiserror = "1.0"
