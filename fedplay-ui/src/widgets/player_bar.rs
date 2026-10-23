@@ -12,11 +12,14 @@ pub struct PlayerBar {
     title_label: gtk4::Label,
     artist_label: gtk4::Label,
     play_button: gtk4::Button,
+    current_track: Rc<RefCell<Option<Track>>>,
 }
 
 impl PlayerBar {
     /// Cria uma nova player bar
     pub fn new(player: Rc<RefCell<GStreamerPlayer>>) -> Self {
+        let current_track = Rc::new(RefCell::new(None));
+
         let bar = gtk4::Box::new(gtk4::Orientation::Horizontal, 16);
         bar.add_css_class("player-bar");
         bar.set_margin_start(16);
@@ -125,13 +128,45 @@ impl PlayerBar {
             title_label,
             artist_label,
             play_button,
+            current_track: current_track.clone(),
         }
     }
 
-    /// Atualiza as informações da faixa na interface
+    /// Obtém a faixa atualmente selecionada.
+    pub fn get_current_track(&self) -> Option<Track> {
+        self.current_track.borrow().clone()
+    }
+
+    // Adicione um método para obter o callback de edição:
+    pub fn get_edit_callback(&self) -> Option<Rc<dyn Fn() + 'static>> {
+        let track_ref = self.current_track.clone();
+
+        Some(Rc::new(move || {
+            if let Some(ref track) = *track_ref.borrow() {
+                println!("Solicitando edição para: {}", track.display_title());
+            }
+        }))
+    }
+
+    /// Atualiza as informações da faixa atual.
     pub fn set_track(&self, track: &Track) {
-        self.title_label.set_text(&track.display_title());
-        self.artist_label.set_text(&track.display_artist());
+        let title = track
+            .metadata
+            .title
+            .as_deref()
+            .unwrap_or("Título desconhecido");
+
+        let artist = track
+            .metadata
+            .artist
+            .as_deref()
+            .unwrap_or("Artista desconhecido");
+
+        self.title_label.set_text(title);
+        self.artist_label.set_text(artist);
+
+        *self.current_track.borrow_mut() = Some(track.clone());
+
         self.play_button
             .set_icon_name("media-playback-pause-symbolic");
     }

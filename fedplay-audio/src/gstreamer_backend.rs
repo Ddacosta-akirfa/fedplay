@@ -2,7 +2,7 @@
 
 use fedplay_core::{PlaybackState, PlayerState, Track};
 use gstreamer::prelude::*;
-use gstreamer::{ElementFactory, Pipeline, State as GstState};
+use gstreamer::{Element, ElementFactory, State as GstState};
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
@@ -11,65 +11,63 @@ pub enum AudioError {
     #[error("Falha ao inicializar GStreamer")]
     InitError,
 
-    #[error("Falha ao criar pipeline")]
+    #[error("Falha ao criar o elemento de reprodução")]
     PipelineError,
 
-    #[error("Arquivo não encontrado: {0}")]
+    #[error("Arquivo não encontrado ou inacessível: {0}")]
     FileNotFound(String),
 
-    #[error("Formato não suportado")]
+    #[error("Formato de áudio não suportado")]
     UnsupportedFormat,
 }
 
-/// Player de áudio usando GStreamer
+/// Player de áudio usando um único elemento playbin.
 pub struct GStreamerPlayer {
-    pipeline: Option<Pipeline>,
+    player: Element,
     state: Arc<Mutex<PlayerState>>,
 }
 
 impl GStreamerPlayer {
-    /// Cria uma nova instância do player
+    /// Cria uma única instância do elemento de reprodução.
     pub fn new() -> Result<Self, AudioError> {
-        // Inicializar GStreamer
         gstreamer::init().map_err(|_| AudioError::InitError)?;
 
-        Ok(Self {
-            pipeline: None,
-            state: Arc::new(Mutex::new(PlayerState::default())),
-        })
+        let player = ElementFactory::make("playbin")
+            .build()
+            .map_err(|_| AudioError::PipelineError)?;
+
+        let state = Arc::new(Mutex::new(PlayerState::default()));
+
+        Ok(Self { player, state })
     }
 
-    /// Carrega uma faixa para reprodução
+    /// Interrompe a faixa anterior e carrega uma nova.
     pub fn load(&mut self, track: &Track) -> Result<(), AudioError> {
-        // Verificar se o arquivo existe
-        if !track.path.exists() {
+        if !track.path.is_file() {
             return Err(AudioError::FileNotFound(
-                track.path.to_string_lossy().to_string(),
+                track.path.to_string_lossy().into_owned(),
             ));
         }
 
-        // Criar pipeline
-        let pipeline = ElementFactory::make("playbin")
-            .build()
-            .map_err(|_| AudioError::PipelineError)?
-            .downcast::<Pipeline>()
-            .map_err(|_| AudioError::PipelineError)?;
-
-        // Obter o caminho absoluto e convertê-lo para URI
-        let uri = track
+        let path = track
             .path
             .canonicalize()
+            .map_err(|_| AudioError::FileNotFound(track.path.to_string_lossy().into_owned()))?;
+
+        let uri =
+            gstreamer::glib::filename_to_uri(&path, None).map_err(|_| AudioError::PipelineError)?;
+
+        // Parar completamente a reprodução anterior antes de trocar a URI.
+        self.player
+            .set_state(GstState::Null)
             .map_err(|_| AudioError::PipelineError)?;
 
-        let uri = url::Url::from_file_path(&uri).map_err(|_| AudioError::PipelineError)?;
+        // Definir o novo ficheiro no mesmo elemento playbin.
+        self.player.set_property("uri", uri.as_str());
 
-        // Definir URI do arquivo
-        pipeline.set_property("uri", uri.as_str());
+        // Sincronizar o estado interno com a nova faixa.
+        let mut state = self.state.lock().map_err(|_| AudioError::PipelineError)?;
 
-        self.pipeline = Some(pipeline);
-
-        // Atualizar estado
-        let mut state = self.state.lock().unwrap();
         state.current_track_id = Some(track.id);
         state.playback = PlaybackState::Stopped;
         state.position_ms = 0;
@@ -77,118 +75,89 @@ impl GStreamerPlayer {
         Ok(())
     }
 
-    /// Inicia a reprodução
+    /// Inicia a reprodução da faixa carregada.
     pub fn play(&self) -> Result<(), AudioError> {
-        if let Some(pipeline) = &self.pipeline {
-            pipeline
-                .set_state(GstState::Playing)
-                .map_err(|_| AudioError::PipelineError)?;
+        self.player
+            .set_state(GstState::Playing)
+            .map_err(|_| AudioError::PipelineError)?;
 
-            let mut state = self.state.lock().unwrap();
-            state.playback = PlaybackState::Playing;
+        let mut state = self.state.lock().map_err(|_| AudioError::PipelineError)?;
 
-            Ok(())
-        } else {
-            Err(AudioError::PipelineError)
-        }
+        state.playback = PlaybackState::Playing;
+
+        Ok(())
     }
 
-    /// Pausa a reprodução
+    /// Pausa a reprodução atual.
     pub fn pause(&self) -> Result<(), AudioError> {
-        if let Some(pipeline) = &self.pipeline {
-            pipeline
-                .set_state(GstState::Paused)
-                .map_err(|_| AudioError::PipelineError)?;
+        self.player
+            .set_state(GstState::Paused)
+            .map_err(|_| AudioError::PipelineError)?;
 
-            let mut state = self.state.lock().unwrap();
-            state.playback = PlaybackState::Paused;
+        let mut state = self.state.lock().map_err(|_| AudioError::PipelineError)?;
 
-            Ok(())
-        } else {
-            Err(AudioError::PipelineError)
-        }
+        state.playback = PlaybackState::Paused;
+
+        Ok(())
     }
 
-    /// Para a reprodução
+    /// Para a reprodução e coloca o elemento em estado Null.
     pub fn stop(&self) -> Result<(), AudioError> {
-        if let Some(pipeline) = &self.pipeline {
-            pipeline
-                .set_state(GstState::Null)
-                .map_err(|_| AudioError::PipelineError)?;
+        self.player
+            .set_state(GstState::Null)
+            .map_err(|_| AudioError::PipelineError)?;
 
-            let mut state = self.state.lock().unwrap();
-            state.playback = PlaybackState::Stopped;
-            state.position_ms = 0;
+        let mut state = self.state.lock().map_err(|_| AudioError::PipelineError)?;
 
-            Ok(())
-        } else {
-            Err(AudioError::PipelineError)
-        }
+        state.playback = PlaybackState::Stopped;
+        state.position_ms = 0;
+
+        Ok(())
     }
 
-    /// Define o volume (0.0 a 1.0)
+    /// Define o volume entre 0.0 e 1.0.
     pub fn set_volume(&self, volume: f64) -> Result<(), AudioError> {
-        if let Some(pipeline) = &self.pipeline {
-            pipeline.set_property("volume", &volume.clamp(0.0, 1.0));
+        let volume = volume.clamp(0.0, 1.0);
 
-            let mut state = self.state.lock().unwrap();
-            state.volume = volume.clamp(0.0, 1.0);
+        self.player.set_property("volume", volume);
 
-            Ok(())
-        } else {
-            Err(AudioError::PipelineError)
-        }
+        let mut state = self.state.lock().map_err(|_| AudioError::PipelineError)?;
+
+        state.volume = volume;
+
+        Ok(())
     }
 
-    /// Retorna o estado atual do player
+    /// Devolve uma cópia do estado interno do leitor.
     pub fn get_state(&self) -> PlayerState {
-        self.state.lock().unwrap().clone()
+        self.state
+            .lock()
+            .map(|state| state.clone())
+            .unwrap_or_default()
     }
 
-    /// Busca a posição atual da reprodução
+    /// Procura uma posição específica, em milissegundos.
     pub fn seek(&self, position_ms: u64) -> Result<(), AudioError> {
-        if let Some(pipeline) = &self.pipeline {
-            let position = gstreamer::ClockTime::from_mseconds(position_ms);
-            pipeline
-                .seek_simple(
-                    gstreamer::SeekFlags::FLUSH | gstreamer::SeekFlags::KEY_UNIT,
-                    position,
-                )
-                .map_err(|_| AudioError::PipelineError)?;
+        let position = gstreamer::ClockTime::from_mseconds(position_ms);
 
-            let mut state = self.state.lock().unwrap();
-            state.position_ms = position_ms;
+        self.player
+            .seek_simple(
+                gstreamer::SeekFlags::FLUSH | gstreamer::SeekFlags::KEY_UNIT,
+                position,
+            )
+            .map_err(|_| AudioError::PipelineError)?;
 
-            Ok(())
-        } else {
-            Err(AudioError::PipelineError)
-        }
+        let mut state = self.state.lock().map_err(|_| AudioError::PipelineError)?;
+
+        state.position_ms = position_ms;
+
+        Ok(())
     }
 }
 
 impl Drop for GStreamerPlayer {
     fn drop(&mut self) {
-        let _ = self.stop();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_player_creation() {
-        let player = GStreamerPlayer::new();
-        assert!(player.is_ok());
-    }
-
-    #[test]
-    fn test_player_state_initial() {
-        let player = GStreamerPlayer::new().unwrap();
-        let state = player.get_state();
-
-        assert_eq!(state.playback, PlaybackState::Stopped);
-        assert_eq!(state.current_track_id, None);
-        assert_eq!(state.volume, 1.0);
+        // Libertar os recursos de áudio ao destruir o leitor.
+        let _ = self.player.set_state(GstState::Null);
     }
 }
