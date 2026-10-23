@@ -15,3 +15,6 @@ gtk4 = { version = "0.11.5", features = ["v4_10"] }
 libadwaita = { version = "0.9.2", features = ["v1_3"] }
 fedplay-core = { path = "../fedplay-core" }
 fedplay-audio = { path = "../fedplay-audio" }
+
+[build-dependencies]
+glib-build-tools = "0.19"
