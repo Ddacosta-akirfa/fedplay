@@ -1,6 +1,6 @@
 //! Aplicação principal do FedPlay.
 
-use crate::views::{EmptyView, LibraryView, TagEditorDialog};
+use crate::views::{EmptyView, LibraryView, PlaylistsView, TagEditorDialog};
 use crate::widgets::{PlayerBar, Sidebar};
 
 use fedplay_audio::GStreamerPlayer;
@@ -42,17 +42,18 @@ impl FedplayApp {
         // Componentes principais.
         let player_bar = Rc::new(PlayerBar::new(Rc::clone(&self.player)));
         let sidebar = Sidebar::new();
-
         let content_stack = self.build_content_stack();
-        let header = adw::HeaderBar::new();
 
+        // Cabeçalho com título dinâmico.
+        let header = adw::HeaderBar::new();
         self.configure_header(&header);
 
-        // Configurar os botões.
+        let title = adw::WindowTitle::new("Todas as Músicas", "148 faixas");
+        header.set_title_widget(Some(&title));
+
+        // Configurar os botões do cabeçalho.
         self.setup_add_button(&header, &window, &player_bar);
-
         self.setup_edit_button(&header, &window, &player_bar, &toast_overlay);
-
         self.setup_header_actions(&header);
 
         // Área de conteúdo.
@@ -60,12 +61,43 @@ impl FedplayApp {
         content_toolbar.add_top_bar(&header);
         content_toolbar.set_content(Some(&content_stack));
 
-        // Navegação.
+        // Navegação da sidebar e atualização do título.
+        let content_stack_clone = content_stack.clone();
+        let title_clone = title.clone();
+
+        sidebar.list_box.connect_row_selected(move |_, row| {
+            if let Some(row) = row {
+                match row.index() {
+                    0 => {
+                        content_stack_clone.set_visible_child_name("library");
+                        title_clone.set_title("Todas as Músicas");
+                        title_clone.set_subtitle("148 faixas");
+                    }
+                    1 => {
+                        content_stack_clone.set_visible_child_name("library");
+                        title_clone.set_title("Artistas");
+                        title_clone.set_subtitle("42 artistas");
+                    }
+                    2 => {
+                        content_stack_clone.set_visible_child_name("library");
+                        title_clone.set_title("Álbuns");
+                        title_clone.set_subtitle("28 álbuns");
+                    }
+                    3 => {
+                        content_stack_clone.set_visible_child_name("playlists");
+                        title_clone.set_title("Listas de Reprodução");
+                        title_clone.set_subtitle("8 listas salvas");
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        // Navegação principal.
         let split_view = self.build_split_view(&sidebar, &content_toolbar);
 
         // Layout principal.
         let main_box = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
-
         main_box.append(&split_view);
         main_box.append(&player_bar.widget);
 
@@ -140,12 +172,15 @@ impl FedplayApp {
         stack.set_vexpand(true);
         stack.set_hexpand(true);
 
+        // Views
         let library_view = LibraryView::new();
         let empty_view = EmptyView::new();
+        let playlists_view = PlaylistsView::new();
 
         stack.add_named(&library_view.widget, Some("library"));
 
         stack.add_named(&empty_view.widget, Some("empty"));
+        stack.add_named(&playlists_view.widget, Some("playlists"));
 
         // A biblioteca é a vista inicial.
         stack.set_visible_child_name("library");
