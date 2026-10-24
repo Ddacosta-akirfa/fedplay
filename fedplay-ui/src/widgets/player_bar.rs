@@ -1,10 +1,51 @@
 //! Player bar persistente do Fedplay
 
 use fedplay_audio::GStreamerPlayer;
-use fedplay_core::Track;
+use fedplay_core::{PlaybackState, Track};
 use gtk4::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
+
+/// Modos de repetição da Player Bar
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepeatMode {
+    None,           // Sem repetição
+    RepeatAll,      // Repetir todas as músicas
+    RepeatOne,      // Repetir apenas a música atual
+    RepeatUntilEnd, // Tocar até ao fim da playlist e parar
+}
+
+impl RepeatMode {
+    /// Avança para o próximo modo de repetição
+    pub fn next(&self) -> Self {
+        match self {
+            RepeatMode::None => RepeatMode::RepeatAll,
+            RepeatMode::RepeatAll => RepeatMode::RepeatOne,
+            RepeatMode::RepeatOne => RepeatMode::RepeatUntilEnd,
+            RepeatMode::RepeatUntilEnd => RepeatMode::None,
+        }
+    }
+
+    /// Retorna o ícone correspondente ao modo
+    pub fn icon_name(&self) -> &'static str {
+        match self {
+            RepeatMode::None => "media-playlist-repeat-symbolic",
+            RepeatMode::RepeatAll => "media-playlist-repeat-symbolic",
+            RepeatMode::RepeatOne => "media-playlist-repeat-song-symbolic",
+            RepeatMode::RepeatUntilEnd => "media-playlist-consecutive-symbolic",
+        }
+    }
+
+    /// Retorna o tooltip correspondente ao modo
+    pub fn tooltip(&self) -> &'static str {
+        match self {
+            RepeatMode::None => "Repetição desativada",
+            RepeatMode::RepeatAll => "Repetir todas as músicas",
+            RepeatMode::RepeatOne => "Repetir música atual",
+            RepeatMode::RepeatUntilEnd => "Tocar até ao fim da playlist",
+        }
+    }
+}
 
 /// Player bar na parte inferior da janela
 pub struct PlayerBar {
@@ -12,14 +53,18 @@ pub struct PlayerBar {
     title_label: gtk4::Label,
     artist_label: gtk4::Label,
     play_button: gtk4::Button,
+    shuffle_button: gtk4::Button,
+    repeat_button: gtk4::Button,
+    favorite_button: gtk4::Button,
     current_track: Rc<RefCell<Option<Track>>>,
+    shuffle_enabled: Rc<RefCell<bool>>,
+    repeat_mode: Rc<RefCell<RepeatMode>>,
+    is_favorite: Rc<RefCell<bool>>,
 }
 
 impl PlayerBar {
     /// Cria uma nova player bar
     pub fn new(player: Rc<RefCell<GStreamerPlayer>>) -> Self {
-        let current_track = Rc::new(RefCell::new(None));
-
         let bar = gtk4::Box::new(gtk4::Orientation::Horizontal, 16);
         bar.add_css_class("player-bar");
         bar.set_margin_start(16);
@@ -62,20 +107,57 @@ impl PlayerBar {
         let buttons_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
         buttons_box.set_halign(gtk4::Align::Center);
 
+        // Botão Shuffle (NOVO)
+        let shuffle_button = gtk4::Button::from_icon_name("media-playlist-shuffle-symbolic");
+        shuffle_button.add_css_class("control-button");
+        shuffle_button.set_tooltip_text(Some("Embaralhar reprodução"));
+
+        // Botão Previous
         let prev_button = gtk4::Button::from_icon_name("media-skip-backward-symbolic");
         prev_button.add_css_class("control-button");
+        prev_button.set_tooltip_text(Some("Faixa anterior"));
 
+        // Botão Play/Pause
         let play_button = gtk4::Button::from_icon_name("media-playback-start-symbolic");
         play_button.add_css_class("play-button");
 
+        // Botão Next
         let next_button = gtk4::Button::from_icon_name("media-skip-forward-symbolic");
         next_button.add_css_class("control-button");
+        next_button.set_tooltip_text(Some("Próxima faixa"));
 
+        // Botão Repeat (NOVO)
+        let repeat_button = gtk4::Button::from_icon_name("media-playlist-repeat-symbolic");
+        repeat_button.add_css_class("control-button");
+        repeat_button.set_tooltip_text(Some("Repetição desativada"));
+
+        // Botão Favorite (NOVO)
+        let favorite_button = gtk4::Button::from_icon_name("starred-symbolic");
+        favorite_button.add_css_class("control-button");
+        favorite_button.set_tooltip_text(Some("Favoritar esta música"));
+
+        // Lógica do Shuffle
+        let shuffle_enabled = Rc::new(RefCell::new(false));
+        let shuffle_btn_clone = shuffle_button.clone();
+        let shuffle_state = shuffle_enabled.clone();
+        shuffle_button.connect_clicked(move |_| {
+            let mut state = shuffle_state.borrow_mut();
+            *state = !*state;
+            if *state {
+                shuffle_btn_clone.add_css_class("active");
+                shuffle_btn_clone.set_tooltip_text(Some("Reprodução embaralhada"));
+            } else {
+                shuffle_btn_clone.remove_css_class("active");
+                shuffle_btn_clone.set_tooltip_text(Some("Embaralhar reprodução"));
+            }
+        });
+
+        // Lógica do Play/Pause
         let player_play = player.clone();
         let play_btn_clone = play_button.clone();
         play_button.connect_clicked(move |_| {
             let state = player_play.borrow().get_state();
-            let _ = if matches!(state.playback, fedplay_core::PlaybackState::Playing) {
+            let _ = if matches!(state.playback, PlaybackState::Playing) {
                 play_btn_clone.set_icon_name("media-playback-start-symbolic");
                 player_play.borrow().pause()
             } else {
@@ -84,11 +166,50 @@ impl PlayerBar {
             };
         });
 
+        // Lógica do Repeat
+        let repeat_mode = Rc::new(RefCell::new(RepeatMode::None));
+        let repeat_btn_clone = repeat_button.clone();
+        let repeat_state = repeat_mode.clone();
+        repeat_button.connect_clicked(move |_| {
+            let mut mode = repeat_state.borrow_mut();
+            *mode = mode.next();
+            repeat_btn_clone.set_icon_name(mode.icon_name());
+            repeat_btn_clone.set_tooltip_text(Some(mode.tooltip()));
+
+            // Adicionar classe CSS quando ativo (exceto None)
+            if *mode != RepeatMode::None {
+                repeat_btn_clone.add_css_class("active");
+            } else {
+                repeat_btn_clone.remove_css_class("active");
+            }
+        });
+
+        // Lógica do Favorite
+        let is_favorite = Rc::new(RefCell::new(false));
+        let fav_btn_clone = favorite_button.clone();
+        let fav_state = is_favorite.clone();
+        favorite_button.connect_clicked(move |_| {
+            let mut state = fav_state.borrow_mut();
+            *state = !*state;
+            if *state {
+                fav_btn_clone.set_icon_name("starred-symbolic");
+                fav_btn_clone.add_css_class("favorite-active");
+                fav_btn_clone.set_tooltip_text(Some("Remover dos favoritos"));
+            } else {
+                fav_btn_clone.set_icon_name("non-starred-symbolic");
+                fav_btn_clone.remove_css_class("favorite-active");
+                fav_btn_clone.set_tooltip_text(Some("Favoritar esta música"));
+            }
+        });
+
+        buttons_box.append(&shuffle_button);
         buttons_box.append(&prev_button);
         buttons_box.append(&play_button);
         buttons_box.append(&next_button);
+        buttons_box.append(&repeat_button);
+        buttons_box.append(&favorite_button);
 
-        // Slider de progresso (placeholder visual por enquanto)
+        // Slider de progresso
         let progress_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
         progress_box.set_halign(gtk4::Align::Center);
 
@@ -123,51 +244,54 @@ impl PlayerBar {
         bar.append(&controls_box);
         bar.append(&actions_box);
 
+        let current_track = Rc::new(RefCell::new(None));
+
         Self {
             widget: bar,
             title_label,
             artist_label,
             play_button,
-            current_track: current_track.clone(),
+            shuffle_button,
+            repeat_button,
+            favorite_button,
+            current_track,
+            shuffle_enabled,
+            repeat_mode,
+            is_favorite,
         }
     }
 
-    /// Obtém a faixa atualmente selecionada.
+    /// Atualiza as informações da faixa na interface
+    pub fn set_track(&self, track: &Track) {
+        self.title_label.set_text(&track.display_title());
+        self.artist_label.set_text(&track.display_artist());
+        self.play_button
+            .set_icon_name("media-playback-pause-symbolic");
+        *self.current_track.borrow_mut() = Some(track.clone());
+
+        // Resetar estado de favorito ao trocar de música
+        *self.is_favorite.borrow_mut() = false;
+        self.favorite_button.set_icon_name("non-starred-symbolic");
+        self.favorite_button.remove_css_class("favorite-active");
+    }
+
+    /// Retorna a faixa atualmente carregada
     pub fn get_current_track(&self) -> Option<Track> {
         self.current_track.borrow().clone()
     }
 
-    // Adicione um método para obter o callback de edição:
-    pub fn get_edit_callback(&self) -> Option<Rc<dyn Fn() + 'static>> {
-        let track_ref = self.current_track.clone();
-
-        Some(Rc::new(move || {
-            if let Some(ref track) = *track_ref.borrow() {
-                println!("Solicitando edição para: {}", track.display_title());
-            }
-        }))
+    /// Retorna o estado atual do shuffle
+    pub fn is_shuffle_enabled(&self) -> bool {
+        *self.shuffle_enabled.borrow()
     }
 
-    /// Atualiza as informações da faixa atual.
-    pub fn set_track(&self, track: &Track) {
-        let title = track
-            .metadata
-            .title
-            .as_deref()
-            .unwrap_or("Título desconhecido");
+    /// Retorna o modo de repetição atual
+    pub fn get_repeat_mode(&self) -> RepeatMode {
+        *self.repeat_mode.borrow()
+    }
 
-        let artist = track
-            .metadata
-            .artist
-            .as_deref()
-            .unwrap_or("Artista desconhecido");
-
-        self.title_label.set_text(title);
-        self.artist_label.set_text(artist);
-
-        *self.current_track.borrow_mut() = Some(track.clone());
-
-        self.play_button
-            .set_icon_name("media-playback-pause-symbolic");
+    /// Retorna se a música atual está favoritada
+    pub fn is_current_favorite(&self) -> bool {
+        *self.is_favorite.borrow()
     }
 }
