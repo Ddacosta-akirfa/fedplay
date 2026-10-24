@@ -42,7 +42,7 @@ impl FedplayApp {
         // Componentes principais.
         let player_bar = Rc::new(PlayerBar::new(Rc::clone(&self.player)));
         let sidebar = Sidebar::new();
-        let content_stack = self.build_content_stack();
+        let content_stack = self.build_content_stack(&player_bar);
 
         // Cabeçalho com título dinâmico.
         let header = adw::HeaderBar::new();
@@ -164,7 +164,7 @@ impl FedplayApp {
     // Navegação e conteúdo
     // --------------------------------------------------
 
-    fn build_content_stack(&self) -> gtk4::Stack {
+    fn build_content_stack(&self, player_bar: &Rc<PlayerBar>) -> gtk4::Stack {
         let stack = gtk4::Stack::new();
 
         stack.set_transition_type(gtk4::StackTransitionType::Crossfade);
@@ -178,9 +178,21 @@ impl FedplayApp {
         let playlists_view = PlaylistsView::new();
 
         stack.add_named(&library_view.widget, Some("library"));
-
         stack.add_named(&empty_view.widget, Some("empty"));
         stack.add_named(&playlists_view.widget, Some("playlists"));
+
+        // Conectar o duplo-clique nas faixas da biblioteca
+        let player_clone_library = self.player.clone();
+        let player_bar_clone_library = Rc::clone(&player_bar); // ← Clone específico para este callback
+
+        library_view.connect_track_activated(move |track| {
+            let mut player = player_clone_library.borrow_mut();
+            if let Ok(_) = player.load(track) {
+                if let Ok(_) = player.play() {
+                    player_bar_clone_library.set_track(track);
+                }
+            }
+        });
 
         // A biblioteca é a vista inicial.
         stack.set_visible_child_name("library");

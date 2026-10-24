@@ -9,14 +9,13 @@ use std::rc::Rc;
 /// Modos de repetição da Player Bar
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RepeatMode {
-    None,           // Sem repetição
-    RepeatAll,      // Repetir todas as músicas
-    RepeatOne,      // Repetir apenas a música atual
-    RepeatUntilEnd, // Tocar até ao fim da playlist e parar
+    None,
+    RepeatAll,
+    RepeatOne,
+    RepeatUntilEnd,
 }
 
 impl RepeatMode {
-    /// Avança para o próximo modo de repetição
     pub fn next(&self) -> Self {
         match self {
             RepeatMode::None => RepeatMode::RepeatAll,
@@ -26,7 +25,6 @@ impl RepeatMode {
         }
     }
 
-    /// Retorna o ícone correspondente ao modo
     pub fn icon_name(&self) -> &'static str {
         match self {
             RepeatMode::None => "media-playlist-repeat-symbolic",
@@ -36,7 +34,6 @@ impl RepeatMode {
         }
     }
 
-    /// Retorna o tooltip correspondente ao modo
     pub fn tooltip(&self) -> &'static str {
         match self {
             RepeatMode::None => "Repetição desativada",
@@ -52,6 +49,7 @@ pub struct PlayerBar {
     pub widget: gtk4::Box,
     title_label: gtk4::Label,
     artist_label: gtk4::Label,
+    cover_image: gtk4::Image, // ← NOVO: Referência à imagem da capa
     play_button: gtk4::Button,
     shuffle_button: gtk4::Button,
     repeat_button: gtk4::Button,
@@ -77,9 +75,10 @@ impl PlayerBar {
         info_box.set_hexpand(true);
         info_box.set_halign(gtk4::Align::Start);
 
-        let cover = gtk4::Image::from_icon_name("audio-x-generic-symbolic");
-        cover.set_pixel_size(50);
-        cover.add_css_class("cover");
+        // Capa da música (agora guardamos a referência)
+        let cover_image = gtk4::Image::from_icon_name("audio-x-generic-symbolic");
+        cover_image.set_pixel_size(50);
+        cover_image.add_css_class("cover");
 
         let text_box = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
         text_box.set_valign(gtk4::Align::Center);
@@ -97,7 +96,7 @@ impl PlayerBar {
         text_box.append(&title_label);
         text_box.append(&artist_label);
 
-        info_box.append(&cover);
+        info_box.append(&cover_image);
         info_box.append(&text_box);
 
         // Coluna central: controles
@@ -107,32 +106,27 @@ impl PlayerBar {
         let buttons_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
         buttons_box.set_halign(gtk4::Align::Center);
 
-        // Botão Shuffle (NOVO)
         let shuffle_button = gtk4::Button::from_icon_name("media-playlist-shuffle-symbolic");
         shuffle_button.add_css_class("control-button");
         shuffle_button.set_tooltip_text(Some("Embaralhar reprodução"));
 
-        // Botão Previous
         let prev_button = gtk4::Button::from_icon_name("media-skip-backward-symbolic");
         prev_button.add_css_class("control-button");
         prev_button.set_tooltip_text(Some("Faixa anterior"));
 
-        // Botão Play/Pause
         let play_button = gtk4::Button::from_icon_name("media-playback-start-symbolic");
         play_button.add_css_class("play-button");
+        play_button.set_tooltip_text(Some("Reproduzir/Pausar"));
 
-        // Botão Next
         let next_button = gtk4::Button::from_icon_name("media-skip-forward-symbolic");
         next_button.add_css_class("control-button");
         next_button.set_tooltip_text(Some("Próxima faixa"));
 
-        // Botão Repeat (NOVO)
         let repeat_button = gtk4::Button::from_icon_name("media-playlist-repeat-symbolic");
         repeat_button.add_css_class("control-button");
         repeat_button.set_tooltip_text(Some("Repetição desativada"));
 
-        // Botão Favorite (NOVO)
-        let favorite_button = gtk4::Button::from_icon_name("starred-symbolic");
+        let favorite_button = gtk4::Button::from_icon_name("non-starred-symbolic");
         favorite_button.add_css_class("control-button");
         favorite_button.set_tooltip_text(Some("Favoritar esta música"));
 
@@ -176,7 +170,6 @@ impl PlayerBar {
             repeat_btn_clone.set_icon_name(mode.icon_name());
             repeat_btn_clone.set_tooltip_text(Some(mode.tooltip()));
 
-            // Adicionar classe CSS quando ativo (exceto None)
             if *mode != RepeatMode::None {
                 repeat_btn_clone.add_css_class("active");
             } else {
@@ -250,6 +243,7 @@ impl PlayerBar {
             widget: bar,
             title_label,
             artist_label,
+            cover_image, // ← Guardar referência
             play_button,
             shuffle_button,
             repeat_button,
@@ -273,6 +267,56 @@ impl PlayerBar {
         *self.is_favorite.borrow_mut() = false;
         self.favorite_button.set_icon_name("non-starred-symbolic");
         self.favorite_button.remove_css_class("favorite-active");
+
+        // Carregar a capa do ficheiro
+        self.update_cover_art(track);
+    }
+
+    /// Extrai e atualiza a capa da música
+    fn update_cover_art(&self, track: &Track) {
+        use lofty::TaggedFileExt;
+
+        // Mostrar o ícone padrão enquanto não houver capa.
+        self.cover_image
+            .set_icon_name(Some("audio-x-generic-symbolic"));
+
+        // Ler os metadados do ficheiro.
+        let Ok(tagged_file) = lofty::read_from_path(&track.path) else {
+            return;
+        };
+
+        let Some(tag) = tagged_file.primary_tag() else {
+            return;
+        };
+
+        // Obter a primeira imagem incorporada nos metadados.
+        let Some(picture) = tag.pictures().first() else {
+            return;
+        };
+
+        let loader = gtk4::gdk_pixbuf::PixbufLoader::new();
+
+        if loader.write(picture.data()).is_err() {
+            return;
+        }
+
+        if loader.close().is_err() {
+            return;
+        }
+
+        let Some(pixbuf) = loader.pixbuf() else {
+            return;
+        };
+
+        // Redimensionar a capa para 50 × 50 pixels.
+        let Some(scaled) = pixbuf.scale_simple(50, 50, gtk4::gdk_pixbuf::InterpType::Bilinear)
+        else {
+            return;
+        };
+
+        // Converter para Texture e atualizar a interface.
+        let texture = gtk4::gdk::Texture::for_pixbuf(&scaled);
+        self.cover_image.set_paintable(Some(&texture));
     }
 
     /// Retorna a faixa atualmente carregada
@@ -280,17 +324,14 @@ impl PlayerBar {
         self.current_track.borrow().clone()
     }
 
-    /// Retorna o estado atual do shuffle
     pub fn is_shuffle_enabled(&self) -> bool {
         *self.shuffle_enabled.borrow()
     }
 
-    /// Retorna o modo de repetição atual
     pub fn get_repeat_mode(&self) -> RepeatMode {
         *self.repeat_mode.borrow()
     }
 
-    /// Retorna se a música atual está favoritada
     pub fn is_current_favorite(&self) -> bool {
         *self.is_favorite.borrow()
     }

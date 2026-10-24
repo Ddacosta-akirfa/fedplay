@@ -546,6 +546,7 @@ dependencies = [
  "fedplay-core",
  "gtk4",
  "libadwaita",
+ "lofty",
 ]
 
 [[package]]

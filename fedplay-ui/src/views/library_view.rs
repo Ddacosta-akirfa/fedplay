@@ -1,10 +1,15 @@
 //! View da biblioteca de músicas
 
+use fedplay_core::Track;
 use gtk4::prelude::*;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 /// View da biblioteca de músicas
 pub struct LibraryView {
     pub widget: gtk4::ScrolledWindow,
+    list_box: gtk4::ListBox,
+    tracks: Rc<RefCell<Vec<Track>>>,
 }
 
 impl LibraryView {
@@ -21,39 +26,53 @@ impl LibraryView {
         list_box.set_margin_end(16);
         list_box.set_margin_top(16);
         list_box.set_margin_bottom(16);
-        list_box.set_selection_mode(gtk4::SelectionMode::None);
+        list_box.set_selection_mode(gtk4::SelectionMode::Single);
+
+        let tracks = Rc::new(RefCell::new(Vec::new()));
 
         // Faixas de exemplo (mock data)
-        let tracks = vec![
+        let mock_tracks = vec![
             (
                 "Midnight City",
                 "M83 • Hurry Up, We're Dreaming",
                 "4:04",
-                "FLAC",
+                Some("FLAC"),
             ),
-            ("Resonance", "HOME • Odyssey", "3:32", ""),
+            ("Resonance", "HOME • Odyssey", "3:32", None),
             (
                 "Dayvan Cowboy",
                 "Boards of Canada • The Campfire Headphase",
                 "5:00",
-                "",
+                None,
             ),
             (
                 "Instant Crush",
                 "Daft Punk ft. Julian Casablancas • RAM",
                 "5:37",
-                "Hi-Res",
+                Some("Hi-Res"),
             ),
             (
                 "An Ending (Ascent)",
                 "Brian Eno • Apollo: Atmospheres",
                 "4:26",
-                "",
+                None,
             ),
-            ("Windowlicker", "Aphex Twin • Windowlicker EP", "6:07", ""),
+            ("Windowlicker", "Aphex Twin • Windowlicker EP", "6:07", None),
         ];
 
-        for (title, artist, duration, badge) in tracks {
+        for (i, (title, artist, duration, badge)) in mock_tracks.iter().enumerate() {
+            let track = Track::new(
+                i as u64 + 1,
+                std::path::PathBuf::new(), // Placeholder
+                fedplay_core::TrackMetadata {
+                    title: Some(title.to_string()),
+                    artist: Some(artist.split(" • ").next().unwrap_or("").to_string()),
+                    album: Some(artist.split(" • ").nth(1).unwrap_or("").to_string()),
+                    ..Default::default()
+                },
+            );
+            tracks.borrow_mut().push(track);
+
             let row = gtk4::ListBoxRow::new();
             row.add_css_class("track-row");
 
@@ -86,27 +105,25 @@ impl LibraryView {
             text_box.append(&title_label);
             text_box.append(&artist_label);
 
-            // Badge (se houver)
+            // Lado direito
             let right_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
             right_box.set_valign(gtk4::Align::Center);
 
-            if !badge.is_empty() {
-                let badge_label = gtk4::Label::new(Some(badge));
+            if let Some(badge_text) = badge {
+                let badge_label = gtk4::Label::new(Some(badge_text));
                 badge_label.add_css_class("badge");
-                if badge == "Hi-Res" {
+                if *badge_text == "Hi-Res" {
                     badge_label.add_css_class("badge-hires");
                 }
                 right_box.append(&badge_label);
             }
 
-            // Duração
             let duration_label = gtk4::Label::new(Some(duration));
             duration_label.add_css_class("numeric-mono");
             right_box.append(&duration_label);
 
-            // Menu button
             let menu_button = gtk4::MenuButton::new();
-            menu_button.set_icon_name("more-vert-symbolic");
+            menu_button.set_icon_name("view-more-symbolic");
             menu_button.add_css_class("flat");
             right_box.append(&menu_button);
 
@@ -147,6 +164,36 @@ impl LibraryView {
 
         scrolled.set_child(Some(&content_box));
 
-        Self { widget: scrolled }
+        Self {
+            widget: scrolled,
+            list_box,
+            tracks,
+        }
+    }
+
+    /// Retorna a faixa selecionada atualmente (se houver)
+    pub fn get_selected_track(&self) -> Option<Track> {
+        if let Some(row) = self.list_box.selected_row() {
+            let index = row.index();
+            let tracks = self.tracks.borrow();
+            if (index as usize) < tracks.len() {
+                return Some(tracks[index as usize].clone());
+            }
+        }
+        None
+    }
+
+    /// Conecta um callback para quando uma faixa for ativada (duplo-clique ou Enter)
+    pub fn connect_track_activated<F: Fn(&Track) + 'static>(&self, callback: F) {
+        let tracks = self.tracks.clone();
+        let callback = Rc::new(callback);
+
+        self.list_box.connect_row_activated(move |_, row| {
+            let index = row.index();
+            let tracks = tracks.borrow();
+            if (index as usize) < tracks.len() {
+                callback(&tracks[index as usize]);
+            }
+        });
     }
 }
