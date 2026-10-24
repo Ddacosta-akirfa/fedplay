@@ -1,23 +1,30 @@
-//! Aplicação principal do Fedplay
+//! Aplicação principal do FedPlay.
+
+use crate::views::{EmptyView, LibraryView, PlaylistsView, TagEditorDialog};
+use crate::widgets::{PlayerBar, Sidebar};
 
 use fedplay_audio::GStreamerPlayer;
-use fedplay_core::{Track, TrackMetadata};
+use fedplay_core::{Track, TrackMetadata, read_metadata};
+
 use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
+
 use std::cell::RefCell;
+use std::path::Path;
 use std::rc::Rc;
 
-/// Aplicação principal do Fedplay
+/// Aplicação principal do FedPlay.
 pub struct FedplayApp {
     app: adw::Application,
     player: Rc<RefCell<GStreamerPlayer>>,
 }
 
 impl FedplayApp {
-    /// Cria uma nova instância da aplicação
+    /// Cria uma nova instância da aplicação.
     pub fn new(app: &adw::Application) -> Self {
-        let player = GStreamerPlayer::new().expect("Falha ao criar player");
+        let player =
+            GStreamerPlayer::new().expect("Não foi possível inicializar o leitor de áudio");
 
         Self {
             app: app.clone(),
@@ -25,134 +32,422 @@ impl FedplayApp {
         }
     }
 
-    /// Constrói a interface do usuário
+    /// Constrói e apresenta a interface principal.
     pub fn build_ui(&self) {
-        // Criar janela principal
+        self.load_css();
+
+        let window = self.build_main_window();
+        let toast_overlay = adw::ToastOverlay::new();
+
+        // Componentes principais.
+        let player_bar = Rc::new(PlayerBar::new(Rc::clone(&self.player)));
+        let sidebar = Sidebar::new();
+        let content_stack = self.build_content_stack(&player_bar);
+
+        // Cabeçalho com título dinâmico.
+        let header = adw::HeaderBar::new();
+        self.configure_header(&header);
+
+        let title = adw::WindowTitle::new("Todas as Músicas", "148 faixas");
+        header.set_title_widget(Some(&title));
+
+        // Configurar os botões do cabeçalho.
+        self.setup_add_button(&header, &window, &player_bar);
+        self.setup_edit_button(&header, &window, &player_bar, &toast_overlay);
+        self.setup_header_actions(&header);
+
+        // Área de conteúdo.
+        let content_toolbar = adw::ToolbarView::new();
+        content_toolbar.add_top_bar(&header);
+        content_toolbar.set_content(Some(&content_stack));
+
+        // Navegação da sidebar e atualização do título.
+        let content_stack_clone = content_stack.clone();
+        let title_clone = title.clone();
+
+        sidebar.list_box.connect_row_selected(move |_, row| {
+            if let Some(row) = row {
+                match row.index() {
+                    0 => {
+                        content_stack_clone.set_visible_child_name("library");
+                        title_clone.set_title("Todas as Músicas");
+                        title_clone.set_subtitle("148 faixas");
+                    }
+                    1 => {
+                        content_stack_clone.set_visible_child_name("library");
+                        title_clone.set_title("Artistas");
+                        title_clone.set_subtitle("42 artistas");
+                    }
+                    2 => {
+                        content_stack_clone.set_visible_child_name("library");
+                        title_clone.set_title("Álbuns");
+                        title_clone.set_subtitle("28 álbuns");
+                    }
+                    3 => {
+                        content_stack_clone.set_visible_child_name("playlists");
+                        title_clone.set_title("Listas de Reprodução");
+                        title_clone.set_subtitle("8 listas salvas");
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        // Navegação principal.
+        let split_view = self.build_split_view(&sidebar, &content_toolbar);
+
+        // Layout principal.
+        let main_box = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+        main_box.append(&split_view);
+        main_box.append(&player_bar.widget);
+
+        toast_overlay.set_child(Some(&main_box));
+        window.set_content(Some(&toast_overlay));
+
+        window.present();
+    }
+
+    // --------------------------------------------------
+    // Janela principal
+    // --------------------------------------------------
+
+    fn build_main_window(&self) -> adw::ApplicationWindow {
         let window = adw::ApplicationWindow::builder()
             .application(&self.app)
-            .title("Fedplay")
-            .default_width(800)
-            .default_height(600)
+            .title("FedPlay")
+            .default_width(1200)
+            .default_height(800)
             .build();
 
-        // Criar layout principal
-        let main_box = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+        window.add_css_class("fedplay-window");
 
-        // Header bar
-        let header = adw::HeaderBar::new();
-        let title = adw::WindowTitle::new("Fedplay", "None");
+        window
+    }
+
+    // --------------------------------------------------
+    // Cabeçalho
+    // --------------------------------------------------
+
+    fn configure_header(&self, header: &adw::HeaderBar) {
+        let title = adw::WindowTitle::new("Todas as músicas", "Biblioteca de músicas do FedPlay");
+
         header.set_title_widget(Some(&title));
-        main_box.append(&header);
+    }
 
-        // Área de conteúdo
-        let content_box = gtk4::Box::new(gtk4::Orientation::Vertical, 12);
-        content_box.set_margin_top(24);
-        content_box.set_margin_bottom(24);
-        content_box.set_margin_start(24);
-        content_box.set_margin_end(24);
-        content_box.set_vexpand(true);
+    fn setup_header_actions(&self, header: &adw::HeaderBar) {
+        // Ordenação.
+        let sort_button = gtk4::MenuButton::new();
+        sort_button.set_icon_name("view-sort-ascending-symbolic");
+        sort_button.set_tooltip_text(Some("Ordenar músicas"));
+        sort_button.add_css_class("flat");
 
-        // Label de status
-        let status_label = gtk4::Label::new(Some("Bem-vindo ao Fedplay!"));
-        status_label.add_css_class("title-1");
-        content_box.append(&status_label);
+        header.pack_start(&sort_button);
 
-        // Botão para carregar arquivo
-        let load_button = gtk4::Button::with_label("Carregar Arquivo de Áudio");
-        load_button.add_css_class("suggested-action");
+        // Pesquisa.
+        let search_button = gtk4::ToggleButton::new();
+        search_button.set_icon_name("system-search-symbolic");
+        search_button.set_tooltip_text(Some("Pesquisar músicas"));
+        search_button.add_css_class("flat");
 
-        let player_clone = self.player.clone();
-        let status_clone = status_label.clone();
-        let window_clone = window.clone();
+        header.pack_end(&search_button);
 
-        load_button.connect_clicked(move |_| {
-            // Criar diálogo de seleção de arquivo
+        // Menu principal.
+        let menu_button = gtk4::MenuButton::new();
+        menu_button.set_icon_name("open-menu-symbolic");
+        menu_button.set_tooltip_text(Some("Menu principal"));
+        menu_button.add_css_class("flat");
+
+        header.pack_end(&menu_button);
+    }
+
+    // --------------------------------------------------
+    // Navegação e conteúdo
+    // --------------------------------------------------
+
+    fn build_content_stack(&self, player_bar: &Rc<PlayerBar>) -> gtk4::Stack {
+        let stack = gtk4::Stack::new();
+
+        stack.set_transition_type(gtk4::StackTransitionType::Crossfade);
+
+        stack.set_vexpand(true);
+        stack.set_hexpand(true);
+
+        // Views
+        let library_view = LibraryView::new();
+        let empty_view = EmptyView::new();
+        let playlists_view = PlaylistsView::new();
+
+        stack.add_named(&library_view.widget, Some("library"));
+        stack.add_named(&empty_view.widget, Some("empty"));
+        stack.add_named(&playlists_view.widget, Some("playlists"));
+
+        // Conectar o duplo-clique nas faixas da biblioteca
+        let player_clone_library = self.player.clone();
+        let player_bar_clone_library = Rc::clone(&player_bar); // ← Clone específico para este callback
+
+        library_view.connect_track_activated(move |track| {
+            let mut player = player_clone_library.borrow_mut();
+            if let Ok(_) = player.load(track) {
+                if let Ok(_) = player.play() {
+                    player_bar_clone_library.set_track(track);
+                }
+            }
+        });
+
+        // A biblioteca é a vista inicial.
+        stack.set_visible_child_name("library");
+
+        stack
+    }
+
+    fn build_split_view(
+        &self,
+        sidebar: &Sidebar,
+        content: &adw::ToolbarView,
+    ) -> adw::NavigationSplitView {
+        let split_view = adw::NavigationSplitView::new();
+
+        split_view.set_max_sidebar_width(280.0);
+        split_view.set_min_sidebar_width(240.0);
+
+        let sidebar_page = adw::NavigationPage::builder()
+            .title("FedPlay")
+            .child(&sidebar.widget)
+            .build();
+
+        split_view.set_sidebar(Some(&sidebar_page));
+
+        let content_page = adw::NavigationPage::builder()
+            .title("Biblioteca")
+            .child(content)
+            .build();
+
+        split_view.set_content(Some(&content_page));
+
+        split_view
+    }
+
+    // --------------------------------------------------
+    // Adicionar música
+    // --------------------------------------------------
+
+    fn setup_add_button(
+        &self,
+        header: &adw::HeaderBar,
+        window: &adw::ApplicationWindow,
+        player_bar: &Rc<PlayerBar>,
+    ) {
+        let add_button = gtk4::Button::from_icon_name("list-add-symbolic");
+
+        add_button.add_css_class("flat");
+
+        add_button.set_tooltip_text(Some("Adicionar ficheiro de áudio"));
+
+        let player = Rc::clone(&self.player);
+        let player_bar = Rc::clone(player_bar);
+        let parent_window = window.clone();
+
+        add_button.connect_clicked(move |_| {
             let dialog = gtk4::FileDialog::new();
-            dialog.set_title("Selecionar Arquivo de Áudio");
 
-            let player_clone2 = player_clone.clone();
-            let status_clone2 = status_clone.clone();
-            let window_clone2 = window_clone.clone();
+            dialog.set_title("Selecionar ficheiro de áudio");
+
+            let filter = gtk4::FileFilter::new();
+            filter.set_name(Some("Ficheiros de áudio"));
+
+            for mime_type in ["audio/mpeg", "audio/mp4", "audio/x-m4a"] {
+                filter.add_mime_type(mime_type);
+            }
+
+            dialog.set_default_filter(Some(&filter));
+
+            let player = Rc::clone(&player);
+            let player_bar = Rc::clone(&player_bar);
 
             dialog.open(
-                Some(&window_clone2),
+                None::<&gtk4::Window>,
                 None::<&gtk4::gio::Cancellable>,
                 move |result| {
-                    if let Ok(file) = result {
-                        if let Some(path) = file.path() {
-                            // Criar track
-                            let track = Track::new(
-                                1,
-                                path.clone(),
-                                TrackMetadata {
-                                    title: path
-                                        .file_stem()
-                                        .and_then(|s| s.to_str())
-                                        .map(|s| s.to_string()),
-                                    ..Default::default()
-                                },
-                            );
-
-                            // Carregar e reproduzir
-                            let mut player = player_clone2.borrow_mut();
-                            if let Err(e) = player.load(&track) {
-                                status_clone2.set_text(&format!("Erro: {}", e));
-                            } else {
-                                if let Err(e) = player.play() {
-                                    status_clone2.set_text(&format!("Erro ao reproduzir: {}", e));
-                                } else {
-                                    status_clone2.set_text(&format!(
-                                        "Reproduzindo: {}",
-                                        track.display_title()
-                                    ));
-                                }
+                    let file = match result {
+                        Ok(file) => file,
+                        Err(error) => {
+                            // Silencia o erro se o usuário apenas fechou a janela
+                            if !error.message().contains("Dismissed")
+                                && !error.message().contains("cancelado")
+                            {
+                                eprintln!("Erro ao selecionar arquivo: {}", error);
                             }
+                            return;
                         }
+                    };
+
+                    let Some(path) = file.path() else {
+                        eprintln!("Não foi possível obter o caminho do ficheiro.");
+                        return;
+                    };
+
+                    if let Err(error) = load_track(&player, &player_bar, &path) {
+                        eprintln!(
+                            "Não foi possível reproduzir '{}': {}",
+                            path.display(),
+                            error
+                        );
                     }
                 },
             );
         });
 
-        content_box.append(&load_button);
-
-        // Controles de reprodução
-        let controls_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 12);
-        controls_box.set_halign(gtk4::Align::Center);
-        controls_box.set_margin_top(24);
-
-        let play_button = gtk4::Button::from_icon_name("media-playback-start-symbolic");
-        play_button.add_css_class("flat");
-
-        let pause_button = gtk4::Button::from_icon_name("media-playback-pause-symbolic");
-        pause_button.add_css_class("flat");
-
-        let stop_button = gtk4::Button::from_icon_name("media-playback-stop-symbolic");
-        stop_button.add_css_class("flat");
-
-        let player_play = self.player.clone();
-        play_button.connect_clicked(move |_| {
-            let _ = player_play.borrow().play();
-        });
-
-        let player_pause = self.player.clone();
-        pause_button.connect_clicked(move |_| {
-            let _ = player_pause.borrow().pause();
-        });
-
-        let player_stop = self.player.clone();
-        stop_button.connect_clicked(move |_| {
-            let _ = player_stop.borrow().stop();
-        });
-
-        controls_box.append(&play_button);
-        controls_box.append(&pause_button);
-        controls_box.append(&stop_button);
-        content_box.append(&controls_box);
-
-        main_box.append(&content_box);
-
-        // Adicionar conteúdo à janela
-        window.set_content(Some(&main_box));
-        window.present();
+        header.pack_end(&add_button);
     }
+
+    // --------------------------------------------------
+    // Editar metadados
+    // --------------------------------------------------
+
+    fn setup_edit_button(
+        &self,
+        header: &adw::HeaderBar,
+        window: &adw::ApplicationWindow,
+        player_bar: &Rc<PlayerBar>,
+        toast_overlay: &adw::ToastOverlay,
+    ) {
+        let edit_button = gtk4::Button::from_icon_name("document-edit-symbolic");
+
+        edit_button.add_css_class("flat");
+
+        edit_button.set_tooltip_text(Some("Editar metadados da faixa atual"));
+
+        let player_bar = Rc::clone(player_bar);
+        let toast_overlay = toast_overlay.clone();
+        let parent_window = window.clone();
+
+        edit_button.connect_clicked(move |_| {
+            let Some(track) = player_bar.get_current_track() else {
+                show_toast(&toast_overlay, "Nenhuma faixa selecionada para editar");
+
+                return;
+            };
+
+            let player_bar_for_saved = Rc::clone(&player_bar);
+            let toast_for_saved = toast_overlay.clone();
+
+            let on_saved = Rc::new(move |updated_track: Track| {
+                // Atualizar a faixa apresentada no leitor.
+                player_bar_for_saved.set_track(&updated_track);
+
+                show_toast(&toast_for_saved, "Metadados guardados com sucesso");
+            });
+
+            let dialog = TagEditorDialog::new(&track, on_saved);
+
+            dialog.widget.set_transient_for(Some(&parent_window));
+
+            dialog.widget.present();
+        });
+
+        header.pack_end(&edit_button);
+    }
+
+    // --------------------------------------------------
+    // CSS
+    // --------------------------------------------------
+
+    fn load_css(&self) {
+        let css_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("data/style.css");
+
+        let provider = gtk4::CssProvider::new();
+
+        if css_path.is_file() {
+            provider.load_from_path(&css_path);
+
+            println!("CSS carregado: {}", css_path.display());
+        } else {
+            eprintln!("CSS não encontrado: {}", css_path.display());
+
+            provider.load_from_data(
+                r#"
+                .fedplay-window {
+                    background-color: #242424;
+                }
+
+                .player-bar {
+                    background-color: #1e1e1e;
+                }
+
+                .track-row:hover {
+                    background-color: rgba(53, 132, 228, 0.1);
+                }
+                "#,
+            );
+        }
+
+        if let Some(display) = gtk4::gdk::Display::default() {
+            gtk4::style_context_add_provider_for_display(
+                &display,
+                &provider,
+                gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+            );
+        } else {
+            eprintln!("Não foi possível obter o display GTK.");
+        }
+    }
+}
+
+// ------------------------------------------------------
+// Funções auxiliares
+// ------------------------------------------------------
+
+/// Carrega uma faixa no leitor e inicia a reprodução.
+fn load_track(
+    player: &Rc<RefCell<GStreamerPlayer>>,
+    player_bar: &Rc<PlayerBar>,
+    path: &Path,
+) -> Result<(), String> {
+    if !path.is_file() {
+        return Err("O caminho selecionado não corresponde a um ficheiro.".to_string());
+    }
+
+    // Tentar ler os metadados existentes.
+    let mut metadata = read_metadata(path).unwrap_or_else(|_| TrackMetadata::default());
+
+    // Usar o nome do ficheiro como título, se necessário.
+    if metadata.title.is_none() {
+        metadata.title = path
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .map(str::to_string);
+    }
+
+    // TODO: substituir o ID fixo por um identificador único
+    // quando a biblioteca de músicas estiver integrada.
+    let track = Track::new(1, path.to_path_buf(), metadata);
+
+    {
+        let mut audio_player = player
+            .try_borrow_mut()
+            .map_err(|error| format!("Não foi possível aceder ao leitor: {error}"))?;
+
+        audio_player
+            .load(&track)
+            .map_err(|error| format!("Erro ao carregar a faixa: {error}"))?;
+
+        audio_player
+            .play()
+            .map_err(|error| format!("Erro ao iniciar a reprodução: {error}"))?;
+    }
+
+    // A atualização da interface ocorre depois de libertar
+    // o empréstimo mutável do leitor.
+    player_bar.set_track(&track);
+
+    Ok(())
+}
+
+/// Apresenta uma notificação temporária.
+fn show_toast(overlay: &adw::ToastOverlay, message: &str) {
+    let toast = adw::Toast::new(message);
+
+    toast.set_timeout(3);
+
+    overlay.add_toast(toast);
 }

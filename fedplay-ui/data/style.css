@@ -1,0 +1,334 @@
+/* Fedplay - Adwaita Sound Architecture
+ * Design System: Fedora Blue + Libadwaita Material Realism
+ */
+
+/* ============================================
+   CORE SURFACES
+   ============================================ */
+window.fedplay-window {
+  background-color: #242424;
+  color: #e4e2e1;
+}
+
+.view-surface {
+  background-color: #1e1e1e;
+}
+
+.card-surface {
+  background-color: #2e2e2e;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+}
+
+/* ============================================
+   TYPOGRAPHY
+   ============================================ */
+.title-hero {
+  font-family: "Inter", sans-serif;
+  font-size: 32px;
+  font-weight: 800;
+  line-height: 40px;
+}
+
+.title-1 {
+  font-family: "Inter", sans-serif;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 28px;
+}
+
+.title-2 {
+  font-family: "Inter", sans-serif;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 24px;
+}
+
+.title-3 {
+  font-family: "Inter", sans-serif;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.title-4 {
+  font-family: "Inter", sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 18px;
+}
+
+.body-medium {
+  font-family: "Inter", sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.dim-label {
+  font-family: "Inter", sans-serif;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 18px;
+  color: #9a9996;
+}
+
+.caption {
+  font-family: "Inter", sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 14px;
+}
+
+.numeric-mono {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+/* ============================================
+   SIDEBAR
+   ============================================ */
+.fedplay-sidebar {
+  background-color: #1e1e1e;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.fedplay-sidebar .nav-item {
+  padding: 10px 16px;
+  border-radius: 8px;
+  margin: 2px 8px;
+  transition: background 150ms ease;
+}
+
+.fedplay-sidebar .nav-item:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.fedplay-sidebar .nav-item.active {
+  background-color: rgba(53, 132, 228, 0.15);
+  color: #a7c8ff;
+}
+
+.fedplay-sidebar .nav-item.active image {
+  color: #3584e4;
+}
+
+/* ============================================
+   TRACK ROW
+   ============================================ */
+.track-row {
+  padding: 12px;
+  border-radius: 8px;
+  transition: background 150ms ease;
+}
+
+.track-row:hover {
+  background-color: rgba(53, 132, 228, 0.1);
+}
+
+.track-row.playing {
+  background-color: rgba(53, 132, 228, 0.15);
+}
+
+.track-row .cover {
+  border-radius: 6px;
+}
+
+.track-row .track-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: #e4e2e1;
+}
+
+.track-row .track-artist {
+  font-size: 13px;
+  color: #9a9996;
+}
+
+/* ============================================
+   PLAYER BAR
+   ============================================ */
+.player-bar {
+  background-color: #1e1e1e;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 12px 16px;
+  min-height: 80px;
+}
+
+.player-bar .cover {
+  border-radius: 6px;
+}
+
+.player-bar .play-button {
+  background-color: #3584e4;
+  color: white;
+  border-radius: 9999px;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0;
+}
+
+.player-bar .play-button:hover {
+  background-color: #1c71d8;
+}
+
+.player-bar .control-button {
+  background: transparent;
+  color: #9a9996;
+  border-radius: 9999px;
+  min-width: 36px;
+  min-height: 36px;
+}
+
+.player-bar .control-button:hover {
+  color: #ffffff;
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+/* Botões de controle ativos (shuffle, repeat) */
+.player-bar .control-button.active {
+  color: #3584e4;
+  background-color: rgba(53, 132, 228, 0.15);
+}
+
+.player-bar .control-button.active:hover {
+  color: #a7c8ff;
+  background-color: rgba(53, 132, 228, 0.25);
+}
+
+/* Botão de favorito ativo */
+.player-bar .control-button.favorite-active {
+  color: #f5c211;
+  background-color: rgba(245, 194, 17, 0.15);
+}
+
+.player-bar .control-button.favorite-active:hover {
+  color: #f9d86b;
+  background-color: rgba(245, 194, 17, 0.25);
+}
+
+/* ============================================
+   BADGES
+   ============================================ */
+.badge {
+  padding: 4px 8px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 500;
+  background-color: #383838;
+  color: #9a9996;
+}
+
+.badge-hires {
+  background-color: rgba(53, 132, 228, 0.15);
+  color: #a7c8ff;
+}
+
+.badge-success {
+  background-color: rgba(51, 209, 122, 0.15);
+  color: #33d17a;
+}
+
+/* ============================================
+   EMPTY STATE
+   ============================================ */
+.empty-state {
+  padding: 48px;
+}
+
+.empty-state .empty-icon {
+  color: #3584e4;
+  opacity: 0.2;
+  font-size: 128px;
+  margin-bottom: 24px;
+}
+
+.empty-state .empty-title {
+  font-size: 22px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.empty-state .empty-subtitle {
+  font-size: 14px;
+  color: #9a9996;
+  margin-bottom: 24px;
+}
+
+/* ============================================
+   SLIDERS
+   ============================================ */
+.player-bar scale trough {
+  min-height: 4px;
+  background-color: #383838;
+  border-radius: 2px;
+}
+
+.player-bar scale trough highlight {
+  background-color: #3584e4;
+  border-radius: 2px;
+}
+
+.player-bar scale slider {
+  min-width: 14px;
+  min-height: 14px;
+  background-color: #ffffff;
+  border-radius: 50%;
+  margin: -5px 0;
+}
+
+.player-bar scale slider:hover {
+  min-width: 16px;
+  min-height: 16px;
+  box-shadow: 0 0 0 4px rgba(53, 132, 228, 0.3);
+}
+
+/* ============================================
+   STATUS CARD (Sidebar)
+   ============================================ */
+.status-card {
+  background-color: #2a2a2a;
+  border-radius: 12px;
+  padding: 12px;
+  margin: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.status-card .status-title {
+  font-size: 11px;
+  font-weight: 500;
+  color: #9a9996;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.status-card .status-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: #a7c8ff;
+  margin-top: 4px;
+}
+
+/* ============================================
+   STORAGE CARD
+   ============================================ */
+.storage-card {
+  background-color: #2a2a2a;
+  border-radius: 12px;
+  padding: 16px;
+  margin: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* ============================================
+   TOAST
+   ============================================ */
+.fedplay-toast {
+  background-color: #303030;
+  color: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
