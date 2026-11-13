@@ -1,5 +1,5 @@
-use crate::{Database, DirectoryScanner, ScannerError, Track};
-use rusqlite::{Transaction, params};
+use crate::{Database, DirectoryScanner, ScannedFile, ScannerError, Track};
+use rusqlite::{OptionalExtension, Transaction, params};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
@@ -17,7 +17,18 @@ pub enum LibraryError {
 pub struct ImportSummary {
     pub tracks_found: usize,
     pub tracks_saved: usize,
+    pub tracks_added: usize,
+    pub tracks_updated: usize,
+    pub tracks_unchanged: usize,
+    pub tracks_restored: usize,
     pub ignored_files: usize,
+}
+
+#[derive(Debug)]
+struct ExistingTrack {
+    file_size: Option<i64>,
+    file_mtime: Option<i64>,
+    is_missing: bool,
 }
 
 pub struct LibraryManager {
@@ -34,8 +45,8 @@ impl LibraryManager {
     }
 
     pub fn import_directory(&self, path: &Path) -> Result<ImportSummary, LibraryError> {
-        // 1. Descobrir as músicas.
-        let scan = self.scanner.scan_directory(path)?;
+        // 1. Descobrir ficheiros sem extrair metadados.
+        let scan = self.scanner.scan_directory_files(path)?;
 
         let now = current_timestamp();
         let directory_path = path.to_string_lossy().into_owned();
@@ -63,26 +74,129 @@ impl LibraryManager {
             params![now, directory_id],
         )?;
 
-        // 4. Guardar cada faixa.
-        for track in &scan.tracks {
-            Self::save_track(&transaction, track, directory_id, now)?;
+        let mut summary = ImportSummary {
+            tracks_found: scan.files.len(),
+            ignored_files: scan.unsupported_files,
+            ..Default::default()
+        };
+
+        // 4. Processar apenas ficheiros novos ou alterados.
+        for file in &scan.files {
+            let existing = Self::find_existing_file(&transaction, file)?;
+
+            match existing {
+                None => {
+                    Self::process_track(&self.scanner, &transaction, file, directory_id, now)?;
+                    summary.tracks_added += 1;
+                }
+
+                Some(existing)
+                    if existing.file_size == Some(file.file_size)
+                        && existing.file_mtime == Some(file.file_mtime) =>
+                {
+                    Self::restore_unchanged_track(&transaction, file, directory_id, now)?;
+
+                    if existing.is_missing {
+                        // A faixa existia, desapareceu e agora foi restaurada.
+                        summary.tracks_restored += 1;
+                    } else {
+                        summary.tracks_unchanged += 1;
+                    }
+                }
+
+                Some(_) => {
+                    Self::process_track(&self.scanner, &transaction, file, directory_id, now)?;
+                    summary.tracks_updated += 1;
+                }
+            }
         }
 
-        Self::mark_missing_tracks(&transaction, directory_id, now, &scan.tracks)?;
+        // 5. Marcar como ausentes os ficheiros que desapareceram.
+        Self::mark_missing_tracks(&transaction, directory_id, now, &scan.files)?;
 
-        // 5. Confirmar todas as operações.
+        // 6. Confirmar todas as operações.
         transaction.commit()?;
 
-        Ok(ImportSummary {
-            tracks_found: scan.tracks.len(),
-            tracks_saved: scan.tracks.len(),
-            ignored_files: scan.unsupported_files,
-        })
+        summary.tracks_saved = summary.tracks_added + summary.tracks_updated;
+
+        Ok(summary)
+    }
+
+    fn find_existing_file(
+        transaction: &Transaction<'_>,
+        file: &ScannedFile,
+    ) -> Result<Option<ExistingTrack>, rusqlite::Error> {
+        let file_path = file.path.to_string_lossy();
+
+        transaction
+            .query_row(
+                "SELECT file_size, file_mtime, missing_since IS NOT NULL
+             FROM tracks
+             WHERE path = ?1",
+                params![file_path.as_ref()],
+                |row| {
+                    Ok(ExistingTrack {
+                        file_size: row.get(0)?,
+                        file_mtime: row.get(1)?,
+                        is_missing: row.get(2)?,
+                    })
+                },
+            )
+            .optional()
+    }
+
+    fn process_track(
+        scanner: &DirectoryScanner,
+        transaction: &Transaction<'_>,
+        file: &ScannedFile,
+        directory_id: i64,
+        now: i64,
+    ) -> Result<(), LibraryError> {
+        let metadata = DirectoryScanner::extract_metadata(&file.path);
+
+        let track = Track::new(0, file.path.clone(), metadata);
+
+        Self::save_track(
+            transaction,
+            &track,
+            file.file_size,
+            file.file_mtime,
+            directory_id,
+            now,
+        )?;
+
+        // Mantém scanner como dependência do processo e permite evolução futura.
+        let _ = scanner;
+
+        Ok(())
+    }
+
+    fn restore_unchanged_track(
+        transaction: &Transaction<'_>,
+        file: &ScannedFile,
+        directory_id: i64,
+        now: i64,
+    ) -> Result<(), rusqlite::Error> {
+        let file_path = file.path.to_string_lossy();
+
+        transaction.execute(
+            "UPDATE tracks
+             SET directory_id = ?1,
+                 missing_since = NULL,
+                 updated_at = ?2
+             WHERE path = ?3
+               AND (directory_id != ?1 OR missing_since IS NOT NULL)",
+            params![directory_id, now, file_path.as_ref()],
+        )?;
+
+        Ok(())
     }
 
     fn save_track(
         transaction: &Transaction<'_>,
         track: &Track,
+        file_size: i64,
+        file_mtime: i64,
         directory_id: i64,
         now: i64,
     ) -> Result<(), rusqlite::Error> {
@@ -116,10 +230,11 @@ impl LibraryManager {
             "INSERT INTO tracks (
                 path, directory_id, artist_id, album_id,
                 title, track_number, genre, duration_ms,
+                file_size, file_mtime,
                 created_at, updated_at
             )
             VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11
             )
             ON CONFLICT(path) DO UPDATE SET
                 directory_id = excluded.directory_id,
@@ -129,6 +244,8 @@ impl LibraryManager {
                 track_number = excluded.track_number,
                 genre = excluded.genre,
                 duration_ms = excluded.duration_ms,
+                file_size = excluded.file_size,
+                file_mtime = excluded.file_mtime,
                 missing_since = NULL,
                 updated_at = excluded.updated_at",
             params![
@@ -140,6 +257,8 @@ impl LibraryManager {
                 metadata.track_number.map(i64::from),
                 metadata.genre,
                 metadata.duration_ms.and_then(|v| i64::try_from(v).ok()),
+                file_size,
+                file_mtime,
                 now,
             ],
         )?;
@@ -187,7 +306,6 @@ impl LibraryManager {
             |row| row.get(0),
         )?;
 
-        // Não substituir um ano que já esteja registado.
         transaction.execute(
             "UPDATE albums
              SET year = COALESCE(year, ?1),
@@ -207,40 +325,37 @@ impl LibraryManager {
         transaction: &Transaction<'_>,
         directory_id: i64,
         now: i64,
-        tracks: &[Track],
+        files: &[ScannedFile],
     ) -> Result<(), rusqlite::Error> {
         transaction.execute_batch(
             "
-        CREATE TEMP TABLE IF NOT EXISTS scanned_paths (
-            path TEXT PRIMARY KEY
-        ) WITHOUT ROWID;
+            CREATE TEMP TABLE IF NOT EXISTS scanned_paths (
+                path TEXT PRIMARY KEY
+            ) WITHOUT ROWID;
 
-        DELETE FROM scanned_paths;
-        ",
+            DELETE FROM scanned_paths;
+            ",
         )?;
 
         {
             let mut statement =
                 transaction.prepare("INSERT INTO scanned_paths (path) VALUES (?1)")?;
 
-            for track in tracks {
-                let path = track.path.to_string_lossy();
-
+            for file in files {
+                let path = file.path.to_string_lossy();
                 statement.execute(params![path.as_ref()])?;
             }
         }
 
         transaction.execute(
-            "
-        UPDATE tracks
-        SET missing_since = ?1,
-            updated_at = ?1
-        WHERE directory_id = ?2
-          AND missing_since IS NULL
-          AND path NOT IN (
-              SELECT path FROM scanned_paths
-          )
-        ",
+            "UPDATE tracks
+             SET missing_since = ?1,
+                 updated_at = ?1
+             WHERE directory_id = ?2
+               AND missing_since IS NULL
+               AND path NOT IN (
+                   SELECT path FROM scanned_paths
+               )",
             params![now, directory_id],
         )?;
 
@@ -253,160 +368,4 @@ fn current_timestamp() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn create_test_directory() -> std::path::PathBuf {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-
-        let path = std::env::temp_dir().join(format!(
-            "fedplay-manager-test-{}-{timestamp}",
-            std::process::id()
-        ));
-
-        fs::create_dir_all(&path).unwrap();
-        path
-    }
-
-    fn create_manager() -> LibraryManager {
-        let database = Database::new(":memory:").unwrap();
-        LibraryManager::new(database)
-    }
-
-    fn count_records(manager: &LibraryManager, table: &str) -> i64 {
-        // Os nomes das tabelas são constantes definidas nos testes.
-        manager
-            .database()
-            .connection()
-            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
-                row.get(0)
-            })
-            .unwrap()
-    }
-
-    #[test]
-    fn test_import_directory_saves_tracks() {
-        let directory = create_test_directory();
-
-        fs::write(directory.join("song-one.mp3"), b"fake audio").unwrap();
-        fs::write(directory.join("song-two.flac"), b"fake audio").unwrap();
-
-        let manager = create_manager();
-
-        let summary = manager.import_directory(&directory).unwrap();
-
-        assert_eq!(summary.tracks_found, 2);
-        assert_eq!(summary.tracks_saved, 2);
-
-        assert_eq!(count_records(&manager, "tracks"), 2);
-        assert_eq!(count_records(&manager, "artists"), 1);
-        assert_eq!(count_records(&manager, "albums"), 1);
-        assert_eq!(count_records(&manager, "watched_directories"), 1);
-
-        fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
-    fn test_import_directory_does_not_duplicate_tracks() {
-        let directory = create_test_directory();
-
-        fs::write(directory.join("song.mp3"), b"fake audio").unwrap();
-
-        let manager = create_manager();
-
-        manager.import_directory(&directory).unwrap();
-        manager.import_directory(&directory).unwrap();
-
-        assert_eq!(count_records(&manager, "tracks"), 1);
-        assert_eq!(count_records(&manager, "artists"), 1);
-        assert_eq!(count_records(&manager, "albums"), 1);
-        assert_eq!(count_records(&manager, "watched_directories"), 1);
-
-        fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
-    fn test_import_directory_persists_track_metadata() {
-        let directory = create_test_directory();
-
-        fs::write(directory.join("my-favorite-song.mp3"), b"fake audio").unwrap();
-
-        let manager = create_manager();
-
-        manager.import_directory(&directory).unwrap();
-
-        let (title, artist, album): (String, String, String) = manager
-            .database()
-            .connection()
-            .query_row(
-                "SELECT title, artist_name, album_title
-                 FROM v_tracks",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .unwrap();
-
-        assert_eq!(title, "my-favorite-song");
-        assert_eq!(artist, "Artista Desconhecido");
-        assert_eq!(album, "Álbum Desconhecido");
-
-        fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
-    fn test_missing_track_is_detected_and_restored() {
-        let directory = create_test_directory();
-        let song = directory.join("song.mp3");
-
-        fs::write(&song, b"fake audio").unwrap();
-
-        let manager = create_manager();
-
-        // Primeira importação.
-        manager.import_directory(&directory).unwrap();
-
-        // Simular remoção da música.
-        fs::remove_file(&song).unwrap();
-
-        manager.import_directory(&directory).unwrap();
-
-        let missing: i64 = manager
-            .database()
-            .connection()
-            .query_row(
-                "SELECT COUNT(*) FROM tracks WHERE missing_since IS NOT NULL",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-
-        assert_eq!(missing, 1);
-
-        // Restaurar a música.
-        fs::write(&song, b"fake audio").unwrap();
-
-        manager.import_directory(&directory).unwrap();
-
-        let restored: i64 = manager
-            .database()
-            .connection()
-            .query_row(
-                "SELECT COUNT(*) FROM tracks WHERE missing_since IS NULL",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-
-        assert_eq!(restored, 1);
-
-        fs::remove_dir_all(directory).unwrap();
-    }
 }

@@ -11,7 +11,8 @@ pub mod track;
 
 pub use database::Database;
 pub use library::{
-    DirectoryScanner, ImportSummary, LibraryError, LibraryManager, ScanStats, ScannerError,
+    DirectoryScanner, FileScanStats, ImportSummary, LibraryError, LibraryManager, ScanStats,
+    ScannedFile, ScannerError,
 };
 pub use metadata::{MetadataError, read_metadata, write_metadata};
 pub use player::{PlaybackState, PlayerState};
