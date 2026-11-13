@@ -49,8 +49,8 @@ pub fn read_metadata(path: &Path) -> Result<TrackMetadata, MetadataError> {
         title: tag.title().map(|s| s.to_string()),
         artist: tag.artist().map(|s| s.to_string()),
         album: tag.album().map(|s| s.to_string()),
-        track_number: tag.track().map(|t| t as u32),
-        year: tag.year().map(|y| y as u32),
+        track_number: tag.track(),
+        year: tag.year(),
         genre: tag.genre().map(|s| s.to_string()),
         duration_ms: Some(duration_ms),
     })
@@ -78,7 +78,7 @@ pub fn write_metadata(path: &Path, metadata: &TrackMetadata) -> Result<(), Metad
         tag.set_track(track);
     }
     if let Some(year) = metadata.year {
-        tag.set_year(year as u32);
+        tag.set_year(year);
     }
     if let Some(ref genre) = metadata.genre {
         tag.set_genre(genre.clone());

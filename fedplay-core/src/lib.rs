@@ -10,7 +10,9 @@ pub mod player;
 pub mod track;
 
 pub use database::Database;
-pub use library::{DirectoryScanner, ScanStats, ScannerError};
+pub use library::{
+    DirectoryScanner, ImportSummary, LibraryError, LibraryManager, ScanStats, ScannerError,
+};
 pub use metadata::{MetadataError, read_metadata, write_metadata};
 pub use player::{PlaybackState, PlayerState};
 pub use track::{Track, TrackMetadata};

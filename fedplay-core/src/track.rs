@@ -25,11 +25,7 @@ pub struct Track {
 impl Track {
     /// Cria uma nova faixa
     pub fn new(id: u64, path: PathBuf, metadata: TrackMetadata) -> Self {
-        Self {
-            id,
-            path,
-            metadata,
-        }
+        Self { id, path, metadata }
     }
 
     /// Retorna o título da faixa ou o nome do arquivo
