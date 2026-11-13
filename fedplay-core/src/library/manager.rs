@@ -68,6 +68,8 @@ impl LibraryManager {
             Self::save_track(&transaction, track, directory_id, now)?;
         }
 
+        Self::mark_missing_tracks(&transaction, directory_id, now, &scan.tracks)?;
+
         // 5. Confirmar todas as operações.
         transaction.commit()?;
 
@@ -200,6 +202,50 @@ impl LibraryManager {
     pub fn database(&self) -> &Database {
         &self.database
     }
+
+    fn mark_missing_tracks(
+        transaction: &Transaction<'_>,
+        directory_id: i64,
+        now: i64,
+        tracks: &[Track],
+    ) -> Result<(), rusqlite::Error> {
+        transaction.execute_batch(
+            "
+        CREATE TEMP TABLE IF NOT EXISTS scanned_paths (
+            path TEXT PRIMARY KEY
+        ) WITHOUT ROWID;
+
+        DELETE FROM scanned_paths;
+        ",
+        )?;
+
+        {
+            let mut statement =
+                transaction.prepare("INSERT INTO scanned_paths (path) VALUES (?1)")?;
+
+            for track in tracks {
+                let path = track.path.to_string_lossy();
+
+                statement.execute(params![path.as_ref()])?;
+            }
+        }
+
+        transaction.execute(
+            "
+        UPDATE tracks
+        SET missing_since = ?1,
+            updated_at = ?1
+        WHERE directory_id = ?2
+          AND missing_since IS NULL
+          AND path NOT IN (
+              SELECT path FROM scanned_paths
+          )
+        ",
+            params![now, directory_id],
+        )?;
+
+        Ok(())
+    }
 }
 
 fn current_timestamp() -> i64 {
@@ -311,6 +357,55 @@ mod tests {
         assert_eq!(title, "my-favorite-song");
         assert_eq!(artist, "Artista Desconhecido");
         assert_eq!(album, "Álbum Desconhecido");
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn test_missing_track_is_detected_and_restored() {
+        let directory = create_test_directory();
+        let song = directory.join("song.mp3");
+
+        fs::write(&song, b"fake audio").unwrap();
+
+        let manager = create_manager();
+
+        // Primeira importação.
+        manager.import_directory(&directory).unwrap();
+
+        // Simular remoção da música.
+        fs::remove_file(&song).unwrap();
+
+        manager.import_directory(&directory).unwrap();
+
+        let missing: i64 = manager
+            .database()
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM tracks WHERE missing_since IS NOT NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(missing, 1);
+
+        // Restaurar a música.
+        fs::write(&song, b"fake audio").unwrap();
+
+        manager.import_directory(&directory).unwrap();
+
+        let restored: i64 = manager
+            .database()
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM tracks WHERE missing_since IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(restored, 1);
 
         fs::remove_dir_all(directory).unwrap();
     }
