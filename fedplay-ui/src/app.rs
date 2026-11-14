@@ -4,32 +4,42 @@ use crate::views::{EmptyView, LibraryView, PlaylistsView, TagEditorDialog};
 use crate::widgets::{PlayerBar, Sidebar};
 
 use fedplay_audio::GStreamerPlayer;
-use fedplay_core::{Track, TrackMetadata, read_metadata};
+use fedplay_core::{Database, LibraryManager, Track, TrackMetadata, read_metadata};
 
 use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 
 use std::cell::RefCell;
+use std::fs;
 use std::path::Path;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 /// Aplicação principal do FedPlay.
 pub struct FedplayApp {
     app: adw::Application,
     player: Rc<RefCell<GStreamerPlayer>>,
+    _library: Rc<LibraryManager>,
 }
 
 impl FedplayApp {
-    /// Cria uma nova instância da aplicação.
-    pub fn new(app: &adw::Application) -> Self {
-        let player =
-            GStreamerPlayer::new().expect("Não foi possível inicializar o leitor de áudio");
+    pub fn new(app: &adw::Application) -> Result<Self, String> {
+        let player = GStreamerPlayer::new()
+            .map_err(|error| format!("Não foi possível inicializar o leitor: {error}"))?;
 
-        Self {
+        let path = database_path()?;
+
+        let database = Database::new(&path)
+            .map_err(|error| format!("Não foi possível inicializar a base de dados: {error}"))?;
+
+        let library = LibraryManager::new(database);
+
+        Ok(Self {
             app: app.clone(),
             player: Rc::new(RefCell::new(player)),
-        }
+            _library: Rc::new(library),
+        })
     }
 
     /// Constrói e apresenta a interface principal.
@@ -52,7 +62,7 @@ impl FedplayApp {
         header.set_title_widget(Some(&title));
 
         // Configurar os botões do cabeçalho.
-        self.setup_add_button(&header, &window, &player_bar);
+        self.setup_add_button(&header, &player_bar);
         self.setup_edit_button(&header, &window, &player_bar, &toast_overlay);
         self.setup_header_actions(&header);
 
@@ -183,14 +193,13 @@ impl FedplayApp {
 
         // Conectar o duplo-clique nas faixas da biblioteca
         let player_clone_library = self.player.clone();
-        let player_bar_clone_library = Rc::clone(&player_bar); // ← Clone específico para este callback
+        let player_bar_clone_library = Rc::clone(player_bar);
 
         library_view.connect_track_activated(move |track| {
             let mut player = player_clone_library.borrow_mut();
-            if let Ok(_) = player.load(track) {
-                if let Ok(_) = player.play() {
-                    player_bar_clone_library.set_track(track);
-                }
+
+            if player.load(track).is_ok() && player.play().is_ok() {
+                player_bar_clone_library.set_track(track);
             }
         });
 
@@ -231,12 +240,7 @@ impl FedplayApp {
     // Adicionar música
     // --------------------------------------------------
 
-    fn setup_add_button(
-        &self,
-        header: &adw::HeaderBar,
-        window: &adw::ApplicationWindow,
-        player_bar: &Rc<PlayerBar>,
-    ) {
+    fn setup_add_button(&self, header: &adw::HeaderBar, player_bar: &Rc<PlayerBar>) {
         let add_button = gtk4::Button::from_icon_name("list-add-symbolic");
 
         add_button.add_css_class("flat");
@@ -245,7 +249,6 @@ impl FedplayApp {
 
         let player = Rc::clone(&self.player);
         let player_bar = Rc::clone(player_bar);
-        let parent_window = window.clone();
 
         add_button.connect_clicked(move |_| {
             let dialog = gtk4::FileDialog::new();
@@ -450,4 +453,23 @@ fn show_toast(overlay: &adw::ToastOverlay, message: &str) {
     toast.set_timeout(3);
 
     overlay.add_toast(toast);
+}
+
+fn database_path() -> Result<PathBuf, String> {
+    let data_dir = match std::env::var_os("XDG_DATA_HOME") {
+        Some(path) => PathBuf::from(path),
+        None => {
+            let home =
+                std::env::var_os("HOME").ok_or("Não foi possível localizar o diretório HOME")?;
+
+            PathBuf::from(home).join(".local/share")
+        }
+    };
+
+    let fedplay_dir = data_dir.join("fedplay");
+
+    fs::create_dir_all(&fedplay_dir)
+        .map_err(|error| format!("Erro ao criar diretório de dados: {error}"))?;
+
+    Ok(fedplay_dir.join("library.db"))
 }

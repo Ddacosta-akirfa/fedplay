@@ -31,7 +31,7 @@ impl LibraryView {
         let tracks = Rc::new(RefCell::new(Vec::new()));
 
         // Faixas de exemplo (mock data)
-        let mock_tracks = vec![
+        let mock_tracks = [
             (
                 "Midnight City",
                 "M83 • Hurry Up, We're Dreaming",

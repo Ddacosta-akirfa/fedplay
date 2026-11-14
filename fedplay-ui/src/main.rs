@@ -7,7 +7,7 @@ mod views;
 mod widgets;
 
 use app::FedplayApp;
-use gtk4::prelude::*;
+use gtk4::gio::prelude::*;
 use libadwaita as adw;
 
 fn main() {
@@ -16,10 +16,10 @@ fn main() {
         .application_id("com.github.fedplay.Fedplay")
         .build();
 
-    app.connect_activate(|app| {
-        let fedplay_app = FedplayApp::new(app);
-        fedplay_app.build_ui();
+    app.connect_activate(|app| match FedplayApp::new(app) {
+        Ok(fedplay_app) => fedplay_app.build_ui(),
+        Err(error) => {
+            eprintln!("Erro ao iniciar FedPlay: {error}");
+        }
     });
-
-    app.run();
 }
