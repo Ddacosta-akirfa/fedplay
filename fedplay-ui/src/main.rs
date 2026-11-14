@@ -22,4 +22,6 @@ fn main() {
             eprintln!("Erro ao iniciar FedPlay: {error}");
         }
     });
+
+    app.run();
 }

@@ -6,6 +6,7 @@ use libadwaita as adw;
 /// View de biblioteca vazia
 pub struct EmptyView {
     pub widget: adw::Clamp, // ← MUDAR DE Box PARA Clamp
+    add_folder_button: gtk4::Button,
 }
 
 impl EmptyView {
@@ -37,9 +38,10 @@ impl EmptyView {
         subtitle.set_wrap(true);
 
         // Botão principal
-        let add_button = gtk4::Button::with_label("Adicionar Pasta de Música");
-        add_button.add_css_class("suggested-action");
-        add_button.add_css_class("pill");
+        let add_folder_button = gtk4::Button::with_label("Adicionar Pasta de Música");
+
+        add_folder_button.add_css_class("suggested-action");
+        add_folder_button.add_css_class("pill");
 
         // Texto de drag & drop
         let drag_label = gtk4::Label::new(Some("Ou arraste arquivos do Nautilus aqui"));
@@ -86,13 +88,23 @@ impl EmptyView {
         box_.append(&icon);
         box_.append(&title);
         box_.append(&subtitle);
-        box_.append(&add_button);
+        box_.append(&add_folder_button);
         box_.append(&drag_label);
         box_.append(&formats_label);
         box_.append(&tips_card);
 
         clamp.set_child(Some(&box_));
 
-        Self { widget: clamp } // ← Retornar o Clamp, não o Box
+        Self {
+            widget: clamp,
+            add_folder_button,
+        }
+    }
+
+    pub fn connect_add_folder<F>(&self, callback: F)
+    where
+        F: Fn() + 'static,
+    {
+        self.add_folder_button.connect_clicked(move |_| callback());
     }
 }

@@ -1,11 +1,10 @@
-//! Aplicação principal do FedPlay.
-
 use crate::views::{EmptyView, LibraryView, PlaylistsView, TagEditorDialog};
 use crate::widgets::{PlayerBar, Sidebar};
 
 use fedplay_audio::GStreamerPlayer;
 use fedplay_core::{Database, LibraryManager, Track, TrackMetadata, read_metadata};
 
+use gtk4::glib::{self, ControlFlow};
 use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
@@ -15,12 +14,14 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex, mpsc};
+use std::time::Duration;
 
 /// Aplicação principal do FedPlay.
 pub struct FedplayApp {
     app: adw::Application,
     player: Rc<RefCell<GStreamerPlayer>>,
-    _library: Rc<LibraryManager>,
+    library: Arc<Mutex<LibraryManager>>,
 }
 
 impl FedplayApp {
@@ -38,28 +39,27 @@ impl FedplayApp {
         Ok(Self {
             app: app.clone(),
             player: Rc::new(RefCell::new(player)),
-            _library: Rc::new(library),
+            library: Arc::new(Mutex::new(library)),
         })
     }
 
-    /// Constrói e apresenta a interface principal.
     pub fn build_ui(&self) {
         self.load_css();
 
         let window = self.build_main_window();
         let toast_overlay = adw::ToastOverlay::new();
 
-        // Componentes principais.
         let player_bar = Rc::new(PlayerBar::new(Rc::clone(&self.player)));
         let sidebar = Sidebar::new();
-        let content_stack = self.build_content_stack(&player_bar);
+
+        let title = adw::WindowTitle::new("Todas as Músicas", "0 faixas");
 
         // Cabeçalho com título dinâmico.
         let header = adw::HeaderBar::new();
-        self.configure_header(&header);
-
-        let title = adw::WindowTitle::new("Todas as Músicas", "148 faixas");
         header.set_title_widget(Some(&title));
+
+        let content_stack =
+            self.build_content_stack(&player_bar, &window, &toast_overlay, &title, &header);
 
         // Configurar os botões do cabeçalho.
         self.setup_add_button(&header, &player_bar);
@@ -174,22 +174,101 @@ impl FedplayApp {
     // Navegação e conteúdo
     // --------------------------------------------------
 
-    fn build_content_stack(&self, player_bar: &Rc<PlayerBar>) -> gtk4::Stack {
+    fn build_content_stack(
+        &self,
+        player_bar: &Rc<PlayerBar>,
+        window: &adw::ApplicationWindow,
+        toast_overlay: &adw::ToastOverlay,
+        title: &adw::WindowTitle,
+        header: &adw::HeaderBar,
+    ) -> gtk4::Stack {
         let stack = gtk4::Stack::new();
+
+        // Views
+        let library_view = Rc::new(LibraryView::new());
+        let empty_view = EmptyView::new();
 
         stack.set_transition_type(gtk4::StackTransitionType::Crossfade);
 
         stack.set_vexpand(true);
         stack.set_hexpand(true);
 
-        // Views
-        let library_view = LibraryView::new();
-        let empty_view = EmptyView::new();
         let playlists_view = PlaylistsView::new();
+
+        // Seleção de uma pasta de música.
+        let parent_window = window.clone();
+
+        let library = Arc::clone(&self.library);
+        let library_view_for_empty = Rc::clone(&library_view);
+        let stack_for_empty = stack.clone();
+        let title_for_empty = title.clone();
+        let toast_for_empty = toast_overlay.clone();
+
+        empty_view.connect_add_folder(move || {
+            open_folder_import_dialog(
+                parent_window.clone(),
+                Arc::clone(&library),
+                toast_for_empty.clone(),
+                Rc::clone(&library_view_for_empty),
+                stack_for_empty.clone(),
+                title_for_empty.clone(),
+            );
+        });
 
         stack.add_named(&library_view.widget, Some("library"));
         stack.add_named(&empty_view.widget, Some("empty"));
         stack.add_named(&playlists_view.widget, Some("playlists"));
+
+        let import_folder_button = gtk4::Button::from_icon_name("folder-open-symbolic");
+
+        import_folder_button.add_css_class("flat");
+        import_folder_button.set_tooltip_text(Some("Importar pasta de música"));
+
+        header.pack_end(&import_folder_button);
+
+        let parent_window = window.clone();
+        let library = Arc::clone(&self.library);
+        let library_view_for_button = Rc::clone(&library_view);
+        let stack_for_button = stack.clone();
+        let title_for_button = title.clone();
+        let toast_for_button = toast_overlay.clone();
+
+        import_folder_button.connect_clicked(move |_| {
+            open_folder_import_dialog(
+                parent_window.clone(),
+                Arc::clone(&library),
+                toast_for_button.clone(),
+                Rc::clone(&library_view_for_button),
+                stack_for_button.clone(),
+                title_for_button.clone(),
+            );
+        });
+
+        let initial_track_count = match self.library.lock() {
+            Ok(manager) => match manager.get_tracks() {
+                Ok(tracks) => {
+                    let count = tracks.len();
+                    library_view.set_tracks(tracks);
+                    count
+                }
+                Err(error) => {
+                    eprintln!("Erro ao carregar biblioteca: {error}");
+                    0
+                }
+            },
+            Err(error) => {
+                eprintln!("Erro ao aceder à biblioteca: {error}");
+                0
+            }
+        };
+
+        title.set_subtitle(&format!("{initial_track_count} faixas"));
+
+        stack.set_visible_child_name(if initial_track_count == 0 {
+            "empty"
+        } else {
+            "library"
+        });
 
         // Conectar o duplo-clique nas faixas da biblioteca
         let player_clone_library = self.player.clone();
@@ -202,9 +281,6 @@ impl FedplayApp {
                 player_bar_clone_library.set_track(track);
             }
         });
-
-        // A biblioteca é a vista inicial.
-        stack.set_visible_child_name("library");
 
         stack
     }
@@ -400,6 +476,85 @@ impl FedplayApp {
 // Funções auxiliares
 // ------------------------------------------------------
 
+fn start_directory_import(
+    library: Arc<Mutex<LibraryManager>>,
+    path: PathBuf,
+    toast_overlay: adw::ToastOverlay,
+    library_view: Rc<LibraryView>,
+    stack: gtk4::Stack,
+    title: adw::WindowTitle,
+) {
+    show_toast(&toast_overlay, "A importar músicas...");
+
+    let (sender, receiver) = mpsc::channel();
+
+    std::thread::spawn(move || {
+        let result = match library.lock() {
+            Ok(manager) => match manager.import_directory(&path) {
+                Ok(summary) => manager
+                    .get_tracks()
+                    .map(|tracks| (summary, tracks))
+                    .map_err(|error| error.to_string()),
+
+                Err(error) => Err(error.to_string()),
+            },
+
+            Err(error) => Err(format!("Não foi possível aceder à biblioteca: {error}")),
+        };
+
+        let _ = sender.send(result);
+    });
+
+    glib::timeout_add_local(Duration::from_millis(100), move || {
+        match receiver.try_recv() {
+            Ok(Ok((summary, tracks))) => {
+                let count = tracks.len();
+
+                // Atualizar os dados e as linhas da biblioteca.
+                library_view.set_tracks(tracks);
+
+                // Atualizar a contagem do cabeçalho.
+                title.set_subtitle(&format!("{count} faixas"));
+
+                // Mostrar a view adequada.
+                stack.set_visible_child_name(if count == 0 { "empty" } else { "library" });
+
+                show_toast(
+                    &toast_overlay,
+                    &format!(
+                        "Importação concluída: {} encontradas, {} adicionadas, {} atualizadas.",
+                        summary.tracks_found, summary.tracks_added, summary.tracks_updated,
+                    ),
+                );
+
+                ControlFlow::Break
+            }
+
+            Ok(Err(error)) => {
+                eprintln!("Erro durante a importação: {error}");
+
+                show_toast(
+                    &toast_overlay,
+                    &format!("Erro ao importar músicas: {error}"),
+                );
+
+                ControlFlow::Break
+            }
+
+            Err(mpsc::TryRecvError::Empty) => ControlFlow::Continue,
+
+            Err(mpsc::TryRecvError::Disconnected) => {
+                show_toast(
+                    &toast_overlay,
+                    "A importação foi interrompida inesperadamente.",
+                );
+
+                ControlFlow::Break
+            }
+        }
+    });
+}
+
 /// Carrega uma faixa no leitor e inicia a reprodução.
 fn load_track(
     player: &Rc<RefCell<GStreamerPlayer>>,
@@ -444,6 +599,39 @@ fn load_track(
     player_bar.set_track(&track);
 
     Ok(())
+}
+
+fn open_folder_import_dialog(
+    parent_window: adw::ApplicationWindow,
+    library: Arc<Mutex<LibraryManager>>,
+    toast_overlay: adw::ToastOverlay,
+    library_view: Rc<LibraryView>,
+    stack: gtk4::Stack,
+    title: adw::WindowTitle,
+) {
+    let dialog = gtk4::FileDialog::new();
+    dialog.set_title("Selecionar pasta de música");
+
+    dialog.select_folder(
+        Some(&parent_window),
+        None::<&gtk4::gio::Cancellable>,
+        move |result| {
+            let folder = match result {
+                Ok(folder) => folder,
+                Err(error) => {
+                    eprintln!("Erro ao selecionar pasta: {error}");
+                    return;
+                }
+            };
+
+            let Some(path) = folder.path() else {
+                show_toast(&toast_overlay, "Não foi possível obter o caminho da pasta.");
+                return;
+            };
+
+            start_directory_import(library, path, toast_overlay, library_view, stack, title);
+        },
+    );
 }
 
 /// Apresenta uma notificação temporária.

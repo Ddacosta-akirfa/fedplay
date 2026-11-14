@@ -1,3 +1,4 @@
+use crate::TrackMetadata;
 use crate::{Database, DirectoryScanner, ScannedFile, ScannerError, Track};
 use rusqlite::{OptionalExtension, Transaction, params};
 use std::path::Path;
@@ -37,6 +38,49 @@ pub struct LibraryManager {
 }
 
 impl LibraryManager {
+    pub fn get_tracks(&self) -> Result<Vec<Track>, LibraryError> {
+        let connection = self.database.connection();
+
+        let mut statement = connection.prepare(
+            "
+        SELECT
+            id,
+            path,
+            title,
+            artist_name,
+            album_title,
+            track_number,
+            year,
+            genre,
+            duration_ms
+        FROM v_tracks
+        WHERE missing_since IS NULL
+        ORDER BY
+            artist_name COLLATE NOCASE,
+            album_title COLLATE NOCASE,
+            track_number,
+            title COLLATE NOCASE
+        ",
+        )?;
+
+        let tracks = statement
+            .query_map([], |row| {
+                let id: i64 = row.get(0)?;
+                let path: String = row.get(1)?;
+
+                let metadata = map_track_metadata(row)?;
+
+                Ok(Track::new(
+                    u64::try_from(id).unwrap_or_default(),
+                    Path::new(&path).to_path_buf(),
+                    metadata,
+                ))
+            })?
+            .collect::<Result<Vec<_>, rusqlite::Error>>()?;
+
+        Ok(tracks)
+    }
+
     pub fn new(database: Database) -> Self {
         Self {
             database,
@@ -368,4 +412,20 @@ fn current_timestamp() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64
+}
+
+fn map_track_metadata(row: &rusqlite::Row<'_>) -> Result<TrackMetadata, rusqlite::Error> {
+    let track_number: Option<i64> = row.get(5)?;
+    let year: Option<i64> = row.get(6)?;
+    let duration_ms: Option<i64> = row.get(8)?;
+
+    Ok(TrackMetadata {
+        title: row.get(2)?,
+        artist: row.get(3)?,
+        album: row.get(4)?,
+        track_number: track_number.and_then(|value| u32::try_from(value).ok()),
+        year: year.and_then(|value| u32::try_from(value).ok()),
+        genre: row.get(7)?,
+        duration_ms: duration_ms.and_then(|value| u64::try_from(value).ok()),
+    })
 }

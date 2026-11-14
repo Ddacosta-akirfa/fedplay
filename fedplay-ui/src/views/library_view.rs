@@ -171,16 +171,84 @@ impl LibraryView {
         }
     }
 
-    /// Retorna a faixa selecionada atualmente (se houver)
-    pub fn get_selected_track(&self) -> Option<Track> {
-        if let Some(row) = self.list_box.selected_row() {
-            let index = row.index();
-            let tracks = self.tracks.borrow();
-            if (index as usize) < tracks.len() {
-                return Some(tracks[index as usize].clone());
-            }
-        }
-        None
+    fn build_track_row(track: &Track) -> gtk4::ListBoxRow {
+        let row = gtk4::ListBoxRow::new();
+        row.add_css_class("track-row");
+
+        let row_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 12);
+        row_box.set_margin_start(12);
+        row_box.set_margin_end(12);
+        row_box.set_margin_top(8);
+        row_box.set_margin_bottom(8);
+
+        let cover = gtk4::Image::from_icon_name("audio-x-generic-symbolic");
+        cover.set_pixel_size(48);
+        cover.add_css_class("cover");
+
+        let text_box = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
+        text_box.set_vexpand(true);
+        text_box.set_valign(gtk4::Align::Center);
+
+        let title = track
+            .metadata
+            .title
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("Faixa sem título");
+
+        let artist = track
+            .metadata
+            .artist
+            .as_deref()
+            .unwrap_or("Artista desconhecido");
+
+        let album = track
+            .metadata
+            .album
+            .as_deref()
+            .unwrap_or("Álbum desconhecido");
+
+        let title_label = gtk4::Label::new(Some(title));
+        title_label.add_css_class("track-title");
+        title_label.set_halign(gtk4::Align::Start);
+        title_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+
+        let artist_label = gtk4::Label::new(Some(&format!("{artist} • {album}")));
+        artist_label.add_css_class("track-artist");
+        artist_label.set_halign(gtk4::Align::Start);
+        artist_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+
+        text_box.append(&title_label);
+        text_box.append(&artist_label);
+
+        let right_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        right_box.set_valign(gtk4::Align::Center);
+
+        let duration = track
+            .metadata
+            .duration_ms
+            .map(|milliseconds| {
+                let total_seconds = milliseconds / 1000;
+                format!("{}:{:02}", total_seconds / 60, total_seconds % 60)
+            })
+            .unwrap_or_else(|| "--:--".to_string());
+
+        let duration_label = gtk4::Label::new(Some(&duration));
+        duration_label.add_css_class("numeric-mono");
+        right_box.append(&duration_label);
+
+        let menu_button = gtk4::MenuButton::new();
+        menu_button.set_icon_name("view-more-symbolic");
+        menu_button.add_css_class("flat");
+        right_box.append(&menu_button);
+
+        row_box.append(&cover);
+        row_box.append(&text_box);
+        row_box.append(&right_box);
+
+        row.set_child(Some(&row_box));
+
+        row
     }
 
     /// Conecta um callback para quando uma faixa for ativada (duplo-clique ou Enter)
@@ -195,5 +263,32 @@ impl LibraryView {
                 callback(&tracks[index as usize]);
             }
         });
+    }
+
+    pub fn get_selected_track(&self) -> Option<Track> {
+        if let Some(row) = self.list_box.selected_row() {
+            let index = row.index();
+            let tracks = self.tracks.borrow();
+            if (index as usize) < tracks.len() {
+                return Some(tracks[index as usize].clone());
+            }
+        }
+        None
+    }
+
+    pub fn set_tracks(&self, new_tracks: Vec<Track>) {
+        // Remover todas as linhas atuais.
+        while let Some(row) = self.list_box.row_at_index(0) {
+            self.list_box.remove(&row);
+        }
+
+        // Atualizar os dados internos.
+        *self.tracks.borrow_mut() = new_tracks;
+
+        // Reconstruir a lista.
+        for track in self.tracks.borrow().iter() {
+            let row = Self::build_track_row(track);
+            self.list_box.append(&row);
+        }
     }
 }
